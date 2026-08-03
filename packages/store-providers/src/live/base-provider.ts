@@ -1,7 +1,19 @@
-import { DEFAULT_VERTICAL_ID, matchCategory, type Availability } from '@deal-finder/shared';
+import {
+  DEFAULT_COUNTRY_CODE,
+  DEFAULT_VERTICAL_ID,
+  matchCategory,
+  type Availability,
+  type CountryCode,
+  type Currency,
+  type StoreRegion,
+} from '@deal-finder/shared';
 // Type-only: erased at compile time, so mock mode still never loads Playwright.
 import type { Page } from 'playwright';
-import { ProviderInvalidDataError, ProviderNotFoundError } from '../errors';
+import {
+  ProviderInvalidDataError,
+  ProviderNotFoundError,
+  ProviderUnsupportedDestinationError,
+} from '../errors';
 import { fetchText } from '../http/fetch-with-timeout';
 import type {
   ExternalProduct,
@@ -65,6 +77,18 @@ export interface LiveProviderConfig {
   timeoutMs?: number;
   /** Minimum delay between requests to this store, in milliseconds. */
   minRequestIntervalMs?: number;
+
+  /**
+   * Destination metadata, declared explicitly per store.
+   *
+   * Never inferred. A retailer's delivery network is not discoverable from its
+   * product pages, and a guess here would become a shipping claim shown to a
+   * shopper as fact. Omitted means domestic-only.
+   */
+  storeCountry?: CountryCode;
+  supportedDeliveryCountries?: readonly CountryCode[];
+  supportedCurrencies?: readonly Currency[];
+  region?: StoreRegion;
 }
 
 /** Per-store request pacing. Requests to one store never overlap. */
@@ -186,6 +210,9 @@ export function createLiveProvider(config: LiveProviderConfig): StoreProvider {
     };
   }
 
+  const storeCountry = config.storeCountry ?? DEFAULT_COUNTRY_CODE;
+  const deliveryCountries = config.supportedDeliveryCountries ?? [storeCountry];
+
   return {
     name: config.name,
     slug: config.slug,
@@ -193,6 +220,41 @@ export function createLiveProvider(config: LiveProviderConfig): StoreProvider {
     websiteUrl: config.websiteUrl,
     logoUrl: config.logoUrl ?? null,
     sourceKind: 'structured-data',
+
+    storeCountry,
+    /**
+     * Only what the descriptor explicitly declares, defaulting to domestic.
+     *
+     * A live adapter must never widen this by inference. We do not know a
+     * retailer's delivery network from its product pages, and guessing would
+     * manufacture a shipping claim out of nothing.
+     */
+    supportedDeliveryCountries: deliveryCountries,
+    supportedCurrencies: config.supportedCurrencies ?? ['EUR'],
+    region: config.region ?? 'local',
+    /** Live adapters read real retailers. Never demo data. */
+    isDemoStore: false,
+
+    supportsDestination(country) {
+      return deliveryCountries.includes(country);
+    },
+
+    /**
+     * Destination-aware quoting is not implemented for live adapters.
+     *
+     * A real per-destination delivery cost lives behind a basket and a postcode
+     * form, not on a product page. Reading it would mean driving a checkout flow —
+     * far more intrusive than the page fetch this adapter is limited to, and past
+     * what `docs/legal-and-ethics.md` permits.
+     *
+     * So live mode declines rather than approximates. Deriving "probably €12.90"
+     * from a shipping-policy page would produce a number the UI could not
+     * distinguish from a quoted one, which is worse than having none.
+     */
+    async getOffer(productUrl, context) {
+      void productUrl;
+      throw new ProviderUnsupportedDestinationError(config.name, context.destinationCountry);
+    },
 
     /**
      * Live keyword search is intentionally not implemented.

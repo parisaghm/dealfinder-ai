@@ -1,8 +1,15 @@
 import { DEFAULT_VERTICAL_ID } from '@deal-finder/shared';
 import { toProviderFailure } from './errors';
 import { mapWithConcurrency, withRetry } from './http/retry';
+import { adriaticaTechDataset } from './mock/data/adriatica-tech';
+import { danskeElektroDataset } from './mock/data/danske-elektro';
 import { gigantiDataset } from './mock/data/gigantti';
+import { ibericaDigitalDataset } from './mock/data/iberica-digital';
+import { kanaalshopDataset } from './mock/data/kanaalshop';
+import { maisonNumeriqueDataset } from './mock/data/maison-numerique';
+import { nordbyteDataset } from './mock/data/nordbyte';
 import { powerDataset } from './mock/data/power';
+import { techhalleDataset } from './mock/data/techhalle';
 import { verkkokauppaDataset } from './mock/data/verkkokauppa';
 import { createMockProvider, type MockProviderOptions } from './mock/mock-provider';
 import type { MockStoreDataset } from './mock/types';
@@ -24,10 +31,37 @@ import {
  * docs/legal-and-ethics.md before enabling it.
  */
 
-export const MOCK_DATASETS: readonly MockStoreDataset[] = [
+/**
+ * The three Finnish catalogues. Real retailer names, synthetic prices — see each
+ * dataset's header. These are the baseline the product shipped with.
+ */
+export const FINNISH_MOCK_DATASETS: readonly MockStoreDataset[] = [
   gigantiDataset,
   powerDataset,
   verkkokauppaDataset,
+];
+
+/**
+ * The seven fictional European catalogues, added for the Europe-wide expansion.
+ *
+ * Entirely synthetic — invented stores, invented brands, invented prices — and
+ * every one carries `isDemoStore: true` so the API and the UI can say so. They
+ * exist because "which stores can deliver to you depends on where you are" cannot
+ * be demonstrated with three shops in one country.
+ */
+export const DEMO_EUROPEAN_MOCK_DATASETS: readonly MockStoreDataset[] = [
+  nordbyteDataset,
+  techhalleDataset,
+  kanaalshopDataset,
+  maisonNumeriqueDataset,
+  ibericaDigitalDataset,
+  adriaticaTechDataset,
+  danskeElektroDataset,
+];
+
+export const MOCK_DATASETS: readonly MockStoreDataset[] = [
+  ...FINNISH_MOCK_DATASETS,
+  ...DEMO_EUROPEAN_MOCK_DATASETS,
 ];
 
 export type ProviderMode = 'mock' | 'live';

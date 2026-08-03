@@ -17,6 +17,20 @@ export const gigantiDataset: MockStoreDataset = {
   websiteUrl: 'https://www.gigantti.fi',
   logoUrl: '/images/stores/gigantti.svg',
   productUrlTemplate: 'https://www.gigantti.fi/product/{id}',
+
+  // Destination metadata, stated explicitly rather than left to defaults.
+  // Finland only: this is a Finnish retailer and nothing here claims otherwise.
+  // `useProductShipping` keeps each listing's own delivery cost authoritative —
+  // several of those figures are asserted by the E2E suite.
+  countryCode: 'FI',
+  currency: 'EUR',
+  supportedCurrencies: ['EUR'],
+  region: 'local',
+  vatRegistrationCountry: 'FI',
+  isDemoStore: false,
+  deliveryRules: {
+    FI: { shippingPrice: null, useProductShipping: true, minDays: 2, maxDays: 4 },
+  },
   products: [
     {
       externalId: 'gig-sony-wh1000xm5',

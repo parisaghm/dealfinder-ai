@@ -12,6 +12,17 @@ export const powerDataset: MockStoreDataset = {
   websiteUrl: 'https://www.power.fi',
   logoUrl: '/images/stores/power.svg',
   productUrlTemplate: 'https://www.power.fi/tuote/{id}',
+
+  // Finland only. See gigantti.ts for why `useProductShipping` is set.
+  countryCode: 'FI',
+  currency: 'EUR',
+  supportedCurrencies: ['EUR'],
+  region: 'local',
+  vatRegistrationCountry: 'FI',
+  isDemoStore: false,
+  deliveryRules: {
+    FI: { shippingPrice: null, useProductShipping: true, minDays: 2, maxDays: 5 },
+  },
   products: [
     {
       externalId: 'pow-bose-qc-ultra',

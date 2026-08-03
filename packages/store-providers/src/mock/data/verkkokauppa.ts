@@ -14,6 +14,19 @@ export const verkkokauppaDataset: MockStoreDataset = {
   websiteUrl: 'https://www.verkkokauppa.com',
   logoUrl: '/images/stores/verkkokauppa.svg',
   productUrlTemplate: 'https://www.verkkokauppa.com/fi/product/{id}',
+
+  // Finland only. See gigantti.ts for why `useProductShipping` is set — this
+  // dataset in particular holds the €12,90 Sony delivery cost and the Marshall
+  // listing that publishes none, and both must survive unchanged.
+  countryCode: 'FI',
+  currency: 'EUR',
+  supportedCurrencies: ['EUR'],
+  region: 'local',
+  vatRegistrationCountry: 'FI',
+  isDemoStore: false,
+  deliveryRules: {
+    FI: { shippingPrice: null, useProductShipping: true, minDays: 1, maxDays: 3 },
+  },
   products: [
     {
       externalId: 'vkk-airpods-pro-3',

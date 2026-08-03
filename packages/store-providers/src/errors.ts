@@ -65,6 +65,30 @@ export class ProviderNotFoundError extends ProviderError {
   }
 }
 
+/**
+ * Thrown when a provider is asked to quote for a destination it does not serve.
+ *
+ * Non-retryable: a store's delivery network will not change between two requests
+ * a second apart. Reusing the `not-found` kind is deliberate — a provider with no
+ * rule for a country has nothing to return, and the caller's correct response is
+ * the same as for a missing product: record the absence and move on. It must
+ * never be papered over with a guessed shipping cost, because a guess reaches the
+ * shopper indistinguishable from a fact.
+ */
+export class ProviderUnsupportedDestinationError extends ProviderError {
+  readonly destinationCountry: string;
+
+  constructor(provider: string, destinationCountry: string) {
+    super(
+      provider,
+      'not-found',
+      `${provider} does not publish delivery to ${destinationCountry}`,
+    );
+    this.name = 'ProviderUnsupportedDestinationError';
+    this.destinationCountry = destinationCountry;
+  }
+}
+
 export class ProviderInvalidDataError extends ProviderError {
   constructor(provider: string, message: string, cause?: unknown) {
     super(provider, 'invalid-data', message, { cause });

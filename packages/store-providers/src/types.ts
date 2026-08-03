@@ -1,8 +1,11 @@
 import {
   availabilitySchema,
+  countryCodeSchema,
   currencySchema,
   type Availability,
+  type CountryCode,
   type Currency,
+  type StoreRegion,
 } from '@deal-finder/shared';
 import { z } from 'zod';
 
@@ -28,8 +31,119 @@ export interface StoreProvider {
   /** How this adapter obtains data — surfaced in logs and the README. */
   sourceKind: ProviderSourceKind;
 
-  searchProducts(query: ProductSearchInput): Promise<ExternalProduct[]>;
+  /**
+   * Destination context is an **optional second argument**, so every existing
+   * caller compiles and behaves unchanged, and a provider that ignores it is
+   * still a valid implementation.
+   */
+  searchProducts(
+    query: ProductSearchInput,
+    context?: DestinationContext,
+  ): Promise<ExternalProduct[]>;
+
+  /**
+   * Unchanged signature. This is the path the scheduled monitor uses, and it must
+   * keep working exactly as before.
+   */
   getProductDetails(url: string): Promise<ExternalProductDetails>;
+
+  // ── Destination awareness ─────────────────────────────────────────────────
+  //
+  // Added additively. Every member below is required of a provider but changes
+  // nothing for the two methods above, which keep their existing signatures so
+  // the monitor's `getProductDetails` path is untouched.
+
+  /** Where the store trades from. Drives the tax and duty determination. */
+  storeCountry: CountryCode;
+  /**
+   * Destinations the store declares it delivers to.
+   *
+   * Coarse capability metadata, and **not** proof that any given product can be
+   * delivered. That requires a `StoreOffer` row for the
+   * (product, country, currency) tuple. A store can declare FI and still have
+   * products with no Finnish offer, and presenting those as deliverable would be
+   * a claim the data does not support.
+   */
+  supportedDeliveryCountries: readonly CountryCode[];
+  supportedCurrencies: readonly Currency[];
+  /** Breadth of the store's own declared network. Displayed, not filtered on. */
+  region: StoreRegion;
+  /** True for the fictional retailers used to demonstrate the feature offline. */
+  isDemoStore: boolean;
+
+  /**
+   * Whether this provider can quote for a destination.
+   *
+   * Each provider answers for itself rather than a caller inferring it from
+   * `supportedDeliveryCountries`, so a provider with genuinely per-destination
+   * logic can express it. The default is always "no": a store is not considered
+   * to serve a destination unless it has an explicit rule saying so.
+   */
+  supportsDestination(country: CountryCode): boolean;
+
+  /**
+   * What a product costs delivered to a specific destination.
+   *
+   * Throws `ProviderUnsupportedDestinationError` rather than returning a guess
+   * when the destination is not served. Silence or a fabricated shipping cost
+   * would both end up presented to a shopper as fact.
+   */
+  getOffer(productUrl: string, context: DestinationContext): Promise<ExternalStoreOffer>;
+}
+
+/** Where the parcel is going, and the currency to quote in. */
+export interface DestinationContext {
+  destinationCountry: CountryCode;
+  currency: CurrencyCode;
+}
+
+/**
+ * Alias kept because the brief names this type. `Currency` is the canonical name
+ * in `@deal-finder/shared`.
+ */
+export type CurrencyCode = Currency;
+
+/**
+ * A store's answer for one product and one destination.
+ *
+ * Distinct from `ExternalProduct`: that describes a listing, this describes what
+ * it costs to have that listing delivered somewhere. The same listing yields a
+ * different `ExternalStoreOffer` per destination, which is the whole point.
+ */
+export interface ExternalStoreOffer {
+  /** The store's own identifier for the listing. */
+  externalId: string;
+  productUrl: string;
+  destinationCountry: CountryCode;
+  /** The currency the store quotes in — not necessarily the requested one. */
+  currency: Currency;
+
+  productPrice: number;
+  originalPrice?: number | null;
+  /**
+   * Null means the store publishes no delivery cost to this destination.
+   *
+   * Null is not zero and must never be coerced to it. A store that has not said
+   * what delivery costs has not said it is free.
+   */
+  shippingPrice?: number | null;
+
+  availability: Availability;
+  /** Business days. Null means the store publishes no estimate. */
+  deliveryMinDays?: number | null;
+  deliveryMaxDays?: number | null;
+
+  /**
+   * Tax and duty, when the *store* publishes something authoritative.
+   *
+   * Normally omitted: the route-based determination in
+   * `@deal-finder/shared/countries` is applied at ingestion instead, so one
+   * implementation governs and a provider cannot accidentally assert that a
+   * cross-border order is duty-free.
+   */
+  taxesIncluded?: boolean | null;
+  estimatedTax?: number | null;
+  estimatedImportFees?: number | null;
 }
 
 export const PROVIDER_SOURCE_KINDS = [
@@ -124,6 +238,30 @@ export const externalProductSchema = z.object({
   ean: z.string().max(20).nullish(),
   mpn: z.string().max(120).nullish(),
   attributes: z.record(z.string(), z.unknown()).nullish(),
+});
+
+/**
+ * Boundary validation for a destination offer.
+ *
+ * Same discipline as `externalProductSchema`: this data comes from a third party,
+ * so a negative shipping cost or an absurd delivery estimate is rejected here
+ * rather than stored. Note `shippingPrice` is `nullish` and *stays* null — the
+ * schema never defaults it, because defaulting it to 0 is precisely the bug.
+ */
+export const externalStoreOfferSchema = z.object({
+  externalId: z.string().min(1).max(128),
+  productUrl: z.string().min(1).max(2048),
+  destinationCountry: countryCodeSchema,
+  currency: currencySchema,
+  productPrice: z.number().finite().nonnegative().max(10_000_000),
+  originalPrice: z.number().finite().nonnegative().max(10_000_000).nullish(),
+  shippingPrice: z.number().finite().nonnegative().max(100_000).nullish(),
+  availability: availabilitySchema,
+  deliveryMinDays: z.number().int().nonnegative().max(365).nullish(),
+  deliveryMaxDays: z.number().int().nonnegative().max(365).nullish(),
+  taxesIncluded: z.boolean().nullish(),
+  estimatedTax: z.number().finite().nonnegative().max(10_000_000).nullish(),
+  estimatedImportFees: z.number().finite().nonnegative().max(10_000_000).nullish(),
 });
 
 export const externalProductDetailsSchema = externalProductSchema.extend({

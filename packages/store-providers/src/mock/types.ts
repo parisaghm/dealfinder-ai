@@ -1,4 +1,4 @@
-import type { Availability } from '@deal-finder/shared';
+import type { Availability, CountryCode, Currency, StoreRegion } from '@deal-finder/shared';
 import type { HistorySpec } from './history';
 
 /**
@@ -35,6 +35,41 @@ export interface MockProductDefinition {
   history: HistorySpec;
 }
 
+/**
+ * What a store charges to deliver to one country, and how long it takes.
+ *
+ * The presence of a rule is what makes a destination served. There is no
+ * "shipsTo: false" — a country with no rule is simply not delivered to, which
+ * makes "does not ship there" the default rather than something a dataset has to
+ * remember to declare.
+ */
+export interface MockDeliveryRule {
+  /**
+   * Delivery cost in the store's own currency.
+   *
+   * `null` means the store publishes a rule for this country but no price — it
+   * delivers there, and will not say what it costs. Distinct from `0`, which is
+   * free delivery, and distinct again from an absent rule, which is no delivery.
+   * All three occur in the datasets, because all three occur in reality.
+   */
+  shippingPrice: number | null;
+  /**
+   * Take the delivery cost from each product's own `shippingPrice` instead.
+   *
+   * The three original Finnish datasets publish delivery per product — Gigantti
+   * free, Verkkokauppa €12,90, one listing with none at all — and those figures
+   * are load-bearing for existing tests. A flat store-level rule would overwrite
+   * them, so the domestic rule defers to the product. Explicit rather than
+   * inferred, so reading the dataset tells you which model it uses.
+   */
+  useProductShipping?: boolean;
+  /** Order value above which delivery is free. Omitted when the store has none. */
+  freeOver?: number;
+  /** Business-day estimate. Omit both when the store publishes no estimate. */
+  minDays?: number;
+  maxDays?: number;
+}
+
 export interface MockStoreDataset {
   slug: string;
   name: string;
@@ -43,4 +78,42 @@ export interface MockStoreDataset {
   /** Path template for product URLs, with `{id}` substituted. */
   productUrlTemplate: string;
   products: readonly MockProductDefinition[];
+
+  // ── Destination metadata ──────────────────────────────────────────────────
+  //
+  // Optional so the three original Finnish datasets remain valid unchanged; the
+  // provider factory applies Finnish defaults when they are absent.
+
+  /** Where the store trades from. Defaults to FI. */
+  countryCode?: CountryCode;
+  /** Currency the store quotes in. Defaults to EUR. */
+  currency?: Currency;
+  supportedCurrencies?: readonly Currency[];
+  /** Breadth of the declared network. Defaults to 'local'. */
+  region?: StoreRegion;
+  vatRegistrationCountry?: CountryCode;
+  /**
+   * True for the fictional European retailers. Defaults to false.
+   *
+   * Surfaced through the provider, the database and the UI so synthetic prices are
+   * never mistaken for real commercial data.
+   */
+  isDemoStore?: boolean;
+  /**
+   * Per-destination delivery rules. A country absent from this map is a country
+   * the store does not deliver to.
+   *
+   * Defaults to domestic-only when omitted.
+   */
+  deliveryRules?: Partial<Record<CountryCode, MockDeliveryRule>>;
+  /**
+   * External ids this store does *not* offer to particular destinations, even
+   * though the store itself delivers there.
+   *
+   * Models the real and awkward case of a listing that cannot be shipped
+   * everywhere the store ships — bulky goods, licensing, regional stock. It is
+   * also the fixture that proves store-level metadata is not sufficient to claim a
+   * product is deliverable: only a StoreOffer row is.
+   */
+  productDestinationExclusions?: Partial<Record<CountryCode, readonly string[]>>;
 }
