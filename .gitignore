@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment — never commit real credentials. Use .env.example as the template.
+.env
+.env.*
+!.env.example
+
+# Prisma generated client (regenerate with `npm run db:generate`)
+packages/db/src/generated/
+
+# Local Prisma dev database state (`prisma dev`)
+.prisma/
+
+# Dev email output — Nodemailer stream transport writes .eml files here
+apps/api/.mail/
+
+# Test / tooling output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

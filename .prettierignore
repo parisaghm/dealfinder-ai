@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+packages/db/src/generated/
+prisma/migrations/
+apps/api/.mail/
+package-lock.json

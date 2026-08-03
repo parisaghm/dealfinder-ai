@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@deal-finder/shared": ["./packages/shared/src/index.ts"],
+      "@deal-finder/shared/*": ["./packages/shared/src/*"],
+      "@deal-finder/ui": ["./packages/ui/src/index.ts"],
+      "@deal-finder/ui/*": ["./packages/ui/src/*"],
+      "@deal-finder/store-providers": ["./packages/store-providers/src/index.ts"],
+      "@deal-finder/store-providers/*": ["./packages/store-providers/src/*"],
+      "@deal-finder/db": ["./packages/db/src/index.ts"],
+      "@deal-finder/db/*": ["./packages/db/src/*"]
+    }
+  }
+}

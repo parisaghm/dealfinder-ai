@@ -1,0 +1,35 @@
+# PostgreSQL for DealFinder AI.
+#
+# This is the standard path. It is NOT required for local development: Prisma 7
+# ships a Docker-free local PostgreSQL server, so `npm run db:dev` gets you a
+# working database with no containers at all. Use this file when you want a
+# conventional Postgres instance (or when running in CI / on a server).
+#
+#   docker compose up -d
+#   # then set in .env:
+#   DATABASE_URL="postgresql://dealfinder:dealfinder@localhost:5432/dealfinder?schema=public"
+#   npm run db:migrate && npm run db:seed
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: dealfinder-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dealfinder
+      POSTGRES_PASSWORD: dealfinder
+      POSTGRES_DB: dealfinder
+      # Speeds up `prisma migrate reset` in development.
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    ports:
+      - '5432:5432'
+    volumes:
+      - dealfinder-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U dealfinder -d dealfinder']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dealfinder-pgdata:

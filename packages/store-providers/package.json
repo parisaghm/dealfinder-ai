@@ -1,0 +1,24 @@
+{
+  "name": "@deal-finder/store-providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pluggable store integrations (mock sample data + guarded live adapters)",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@deal-finder/shared": "*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

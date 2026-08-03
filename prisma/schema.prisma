@@ -1,0 +1,430 @@
+// DealFinder AI — database schema
+//
+// Prisma 7: the client is generated as plain TypeScript into a path we own
+// (no writes into node_modules), and the datasource URL lives in
+// prisma.config.ts rather than here.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../packages/db/src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Stock states normalised across stores. Providers map their own wording onto
+/// these values, so the rest of the app never sees store-specific strings.
+enum Availability {
+  IN_STOCK
+  LOW_STOCK
+  OUT_OF_STOCK
+  PREORDER
+  DISCONTINUED
+  UNKNOWN
+}
+
+enum NotificationType {
+  TARGET_REACHED
+  PRICE_DROP
+  BACK_IN_STOCK
+  TEST
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// Per-user monitoring cadence. The scheduler runs on one global cron; this
+/// determines whether a given user's items are due for a check yet.
+enum CheckFrequency {
+  HOURLY
+  EVERY_6_HOURS
+  DAILY
+  WEEKLY
+}
+
+/// How a store offer came to be attached to a canonical product. Recorded so a
+/// rematch can tell a machine decision (revisitable) from a human one (sticky),
+/// and so the UI can explain *why* two listings are grouped.
+enum MatchMethod {
+  IDENTIFIER
+  MODEL
+  NAME
+  MANUAL
+  AI
+}
+
+enum MatchConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum MatchCandidateStatus {
+  PENDING
+  AI_CONFIRMED
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings       UserSettings?
+  watchlistItems WatchlistItem[]
+  savedSearches  SavedSearch[]
+  notifications  Notification[]
+
+  @@map("users")
+}
+
+/// Settings live in their own table rather than as JSON on User so the
+/// monitoring job can filter on `checkFrequency` / `notifyByEmail` in SQL
+/// instead of loading and parsing every user's preferences.
+model UserSettings {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  notifyByEmail         Boolean        @default(true)
+  notifyOnTargetReached Boolean        @default(true)
+  notifyOnPriceDrop     Boolean        @default(false)
+  checkFrequency        CheckFrequency @default(EVERY_6_HOURS)
+
+  /// Store slugs and category ids pre-selected in the search filters.
+  preferredStores     String[] @default([])
+  preferredCategories String[] @default([])
+
+  currency  String   @default("EUR")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_settings")
+}
+
+model Store {
+  id String @id @default(cuid())
+
+  /// URL-safe identifier used in `?stores=` filters and by provider adapters.
+  slug       String  @unique
+  name       String  @unique
+  websiteUrl String
+  logoUrl    String?
+  isActive   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@index([isActive])
+  @@map("stores")
+}
+
+model Product {
+  id String @id @default(cuid())
+
+  /// The store's own identifier for this product. Unique per store, which is
+  /// what makes provider ingestion an idempotent upsert.
+  externalId String
+
+  name        String
+  description String?
+  brand       String?
+
+  /// Category slug from the vertical's taxonomy (see packages/shared/verticals).
+  category String
+
+  /// Which market this product belongs to. Present from day one so additional
+  /// verticals (cars, flights, hotels, …) do not require a migration of this
+  /// table or changes to search and scoring.
+  vertical String @default("electronics")
+
+  /// Vertical-specific fields, validated against the vertical's Zod schema at
+  /// the ingestion boundary rather than trusted blindly.
+  attributes Json?
+
+  imageUrl   String?
+  productUrl String
+
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  currentPrice  Decimal  @db.Decimal(10, 2)
+  originalPrice Decimal? @db.Decimal(10, 2)
+  shippingPrice Decimal? @db.Decimal(10, 2)
+  currency      String   @default("EUR")
+
+  /// Derived from currentPrice/originalPrice and maintained on every write.
+  ///
+  /// Denormalised deliberately: `minimumDiscount` filtering and
+  /// `best-discount` sorting are the two hottest paths in the product, and
+  /// both need an indexable column. Computing it in SQL on every request, or
+  /// sorting in application code after pagination, would be wrong or slow.
+  /// All writes funnel through one helper so it cannot drift.
+  discountPercent Int @default(0)
+
+  availability  Availability @default(UNKNOWN)
+  lastCheckedAt DateTime     @default(now())
+
+  /// Identifiers as published by *this* store.
+  ///
+  /// Deliberately not unique: several stores legitimately sell the same GTIN,
+  /// and that is precisely what cross-store matching is looking for. Uniqueness
+  /// belongs on CanonicalProduct, where it means "one record per real product".
+  modelNumber String?
+  gtin        String?
+  ean         String?
+  mpn         String?
+
+  /// The real-world product this listing is an offer for. Null means "not
+  /// matched yet", which is a permanently valid state — a store can publish a
+  /// product nobody else carries, and ingestion runs before matching does.
+  canonicalProductId String?
+  canonicalProduct   CanonicalProduct? @relation(fields: [canonicalProductId], references: [id], onDelete: SetNull)
+
+  /// Provenance of the attachment above, so a match can be audited and undone.
+  /// Undoing one is nulling these four columns; no data is ever destroyed.
+  canonicalMatchMethod MatchMethod?
+  canonicalMatchScore  Int?
+  canonicalMatchedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  priceHistory    PriceHistory[]
+  watchlistItems  WatchlistItem[]
+  notifications   Notification[]
+  matchCandidates ProductMatchCandidate[]
+
+  @@unique([storeId, externalId])
+  @@index([storeId])
+  @@index([category])
+  @@index([vertical, category])
+  @@index([currentPrice])
+  @@index([discountPercent])
+  @@index([lastCheckedAt])
+  @@index([brand])
+  @@index([canonicalProductId])
+  @@index([gtin])
+  @@index([ean])
+  @@index([brand, modelNumber])
+  @@map("products")
+}
+
+/// One real-world product, independent of who sells it.
+///
+/// Deliberately *not* a merge of Product rows: offers keep their own identity,
+/// price, history, watchlist entries and store, and simply point here. That is
+/// what makes an incorrect match cheap to undo — one nulled column, rather than
+/// reconstructing deleted data — and it is why existing watchlists and alerts
+/// are untouched by this feature.
+model CanonicalProduct {
+  id String @id @default(cuid())
+
+  name        String
+  brand       String?
+  modelNumber String?
+  category    String
+  vertical    String  @default("electronics")
+
+  /// GS1 identifiers, stored normalised and check-digit validated. `gtin` is
+  /// the 14-digit zero-padded form and is the identity of record; `ean` holds
+  /// the 13- or 8-digit form as published, for display and lookup.
+  gtin String?
+  ean  String?
+  /// Manufacturer part number, uppercased with separators stripped.
+  mpn  String?
+
+  /// Lowercased brand, used only as a uniqueness and lookup key so that "Sony",
+  /// "SONY" and "sony " cannot produce three canonical records.
+  brandKey String?
+
+  /// Deterministic output of `normaliseProductName`. A lookup key of last
+  /// resort and a debugging aid — explicitly NOT unique, because two genuinely
+  /// different variants can normalise to the same string.
+  normalizedName String
+
+  imageUrl String?
+
+  /// Merged specifications plus matcher metadata (`__matcherVersion`). Json
+  /// because the attributes that matter differ per category, and adding one
+  /// must not require a migration.
+  specifications Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  offers          Product[]
+  matchCandidates ProductMatchCandidate[]
+
+  /// Postgres treats NULLs as distinct in a unique index, which is exactly the
+  /// semantics wanted: uniqueness is enforced only where the identifier is
+  /// actually known, with no partial index and so no drift from what Prisma
+  /// can express.
+  @@unique([gtin])
+  @@unique([ean])
+  @@unique([brandKey, mpn])
+  @@index([category])
+  @@index([vertical, category])
+  @@index([brandKey, category])
+  @@index([normalizedName])
+  @@map("canonical_products")
+}
+
+/// A proposed, not-yet-trusted link between one store offer and one canonical
+/// product.
+///
+/// Rows here are the review queue. They are also the memory that stops a
+/// rejected pair being proposed again on the next matching run — which is why
+/// a rejection is a status change rather than a delete.
+model ProductMatchCandidate {
+  id String @id @default(cuid())
+
+  sourceProductId String
+  sourceProduct   Product @relation(fields: [sourceProductId], references: [id], onDelete: Cascade)
+
+  candidateCanonicalProductId String
+  candidateCanonicalProduct   CanonicalProduct @relation(fields: [candidateCanonicalProductId], references: [id], onDelete: Cascade)
+
+  score      Int
+  confidence MatchConfidence
+
+  /// The full explanation — reasons, conflicts and the engine version that
+  /// produced them — so a decision stays auditable after the algorithm moves on.
+  reasons Json
+
+  status MatchCandidateStatus @default(PENDING)
+
+  reviewedAt DateTime?
+  /// A user id, or "seed" / "ai:<id>". Plain text rather than a foreign key so
+  /// the audit trail survives the reviewer's account being deleted.
+  reviewedBy String?
+  note       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Makes re-running the matcher an upsert rather than a duplicate factory.
+  @@unique([sourceProductId, candidateCanonicalProductId])
+  @@index([status, score])
+  @@index([sourceProductId])
+  @@index([candidateCanonicalProductId])
+  @@map("product_match_candidates")
+}
+
+/// One row per observed price. Written only when the price actually changes,
+/// so the series stays a record of changes rather than of polling frequency.
+model PriceHistory {
+  id String @id @default(cuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  price      Decimal  @db.Decimal(10, 2)
+  currency   String   @default("EUR")
+  recordedAt DateTime @default(now())
+
+  @@index([productId, recordedAt])
+  @@index([recordedAt])
+  @@map("price_history")
+}
+
+model WatchlistItem {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Null means "track it, but do not alert me at a specific price".
+  targetPrice   Decimal? @db.Decimal(10, 2)
+  alertsEnabled Boolean  @default(true)
+
+  /// When the user was last emailed about this item; drives the alert cooldown.
+  lastAlertedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// A user can track a given product once.
+  @@unique([userId, productId])
+  @@index([userId])
+  @@index([alertsEnabled])
+  @@index([productId])
+  @@map("watchlist_items")
+}
+
+model SavedSearch {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name            String?
+  query           String?
+  maximumPrice    Decimal? @db.Decimal(10, 2)
+  minimumDiscount Int?
+  category        String?
+  /// Store slugs; empty means any store.
+  stores          String[] @default([])
+  vertical        String   @default("electronics")
+  alertsEnabled   Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("saved_searches")
+}
+
+model Notification {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Nullable so a notification survives its product being removed, and so
+  /// non-product notifications are representable.
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  type    NotificationType
+  message String
+  status  NotificationStatus @default(PENDING)
+
+  /// The price that triggered this alert.
+  ///
+  /// Addition to the original specification: without it, "do not alert twice
+  /// for the same unchanged price" can only be implemented by re-parsing
+  /// `message`, which is fragile. Stored explicitly instead.
+  priceAtAlert Decimal? @db.Decimal(10, 2)
+
+  sentAt    DateTime?
+  error     String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([productId])
+  @@index([type, status])
+  @@map("notifications")
+}

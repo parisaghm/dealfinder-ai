@@ -1,0 +1,58 @@
+{
+  "name": "deal-finder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DealFinder AI — intelligent shopping-discount discovery and price-alert platform",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev -w @deal-finder/api",
+    "dev:web": "npm run dev -w @deal-finder/web",
+    "build": "npm run build -w @deal-finder/api && npm run build -w @deal-finder/web",
+    "start": "npm run start -w @deal-finder/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:dev": "cross-env NODE_OPTIONS=--experimental-sqlite prisma dev --detach --port 51213 --db-port 51214 --shadow-db-port 51215",
+    "db:dev:stop": "cross-env NODE_OPTIONS=--experimental-sqlite prisma dev stop",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev && prisma generate",
+    "db:deploy": "prisma migrate deploy && prisma generate",
+    "db:seed": "prisma db seed",
+    "db:match": "tsx prisma/match.ts",
+    "db:reset": "prisma migrate reset --force && prisma generate && prisma db seed",
+    "db:studio": "prisma studio",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "npm run test -w @deal-finder/shared && npm run test -w @deal-finder/store-providers",
+    "test:api": "npm run test -w @deal-finder/api",
+    "test:web": "npm run test -w @deal-finder/web",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^22.20.1",
+    "concurrently": "^10.0.4",
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.4.2",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "prisma": "^7.9.1",
+    "tsx": "^4.23.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
+}

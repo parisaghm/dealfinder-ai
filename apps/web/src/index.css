@@ -1,0 +1,204 @@
+@import 'tailwindcss';
+
+/**
+ * Scan the design-system package too.
+ *
+ * Tailwind 4's automatic source detection only walks the Vite root
+ * (apps/web), so utilities used *exclusively* inside packages/ui were never
+ * generated. That fails silently and misleadingly: shared classes like
+ * `bg-accent-700` still worked because apps/web happens to use them as well,
+ * while `pl-9` and `whitespace-nowrap` — used only by the Input and Button
+ * primitives — simply had no CSS, leaving inputs with zero left padding under
+ * their currency symbol.
+ */
+@source '../../../packages/ui/src';
+
+/**
+ * Design tokens.
+ *
+ * Tailwind 4 is configured in CSS rather than a JS config file. Everything the
+ * interface is allowed to look like is declared here.
+ *
+ * The intent is a price-comparison/fintech tool, not a shop: a light neutral
+ * canvas, near-black text, and exactly one accent colour reserved for actions
+ * and for the numbers that matter. Price direction (down/up) is the only other
+ * place colour is spent, because there it carries information rather than
+ * decoration. No gradients, no glassmorphism, one shadow.
+ */
+@theme {
+  /* Neutrals — a slightly cool grey scale for a calm, readable canvas. */
+  --color-canvas: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f2f4f7;
+
+  --color-ink-900: #0f1729;
+  --color-ink-700: #344054;
+  --color-ink-500: #667085;
+  --color-ink-400: #98a2b3;
+
+  --color-line: #e4e7ec;
+  --color-line-strong: #d0d5dd;
+
+  /* The single accent: a deep teal that reads as trustworthy rather than
+     promotional, and holds >=4.5:1 contrast on white at 700. */
+  --color-accent-50: #eefbf8;
+  --color-accent-100: #d3f4ec;
+  --color-accent-500: #17a394;
+  --color-accent-600: #0d8578;
+  --color-accent-700: #0f766e;
+  --color-accent-800: #115e56;
+  --color-accent-900: #134e48;
+
+  /* Chart mark colour.
+     Deliberately a different step from --color-accent-700: interface text and
+     buttons are optimised for WCAG text contrast, whereas a chart mark needs
+     enough chroma not to read as grey. accent-700 fails a chroma floor as a
+     plotted line; this step passes chroma, the lightness band and >=3:1
+     against the surface. */
+  --color-chart-line: #0e9384;
+
+  /* Categorical series colours — one per store on the cross-store chart,
+     assigned in fixed slot order and never cycled.
+
+     Validated, not eyeballed. Against the #ffffff card surface the six slots
+     pass the lightness band, the chroma floor, adjacent-pair CVD separation
+     (worst 10.1 ΔE under protanopia) and the normal-vision floor (worst 16.3).
+     Slots 5 and 6 fall below 3:1 contrast, which obligates a relief channel —
+     met by the right-edge direct labels and the "show values as a table"
+     fallback, both of which the chart ships. The first four clear every check
+     including contrast under all-pairs, which is the realistic case: three
+     Finnish stores.
+
+     Two consequences worth knowing before editing this block:
+       - slot 1 is deliberately identical to --color-chart-line, so a
+         single-store comparison and the single-series product chart are the
+         same chart;
+       - the validation is against #ffffff. On --color-surface-muted the orange
+         also drops below 3:1, so the chart must sit on --color-surface. */
+  --color-series-1: #0e9384;
+  --color-series-2: #eb6834;
+  --color-series-3: #2a78d6;
+  --color-series-4: #4a3aa7;
+  --color-series-5: #eda100;
+  --color-series-6: #e87ba4;
+
+  /* Semantic: price movement and warnings only. */
+  --color-drop-50: #ecfdf5;
+  --color-drop-700: #047857;
+  --color-rise-50: #fef2f2;
+  --color-rise-700: #b42318;
+  --color-warn-50: #fffbeb;
+  --color-warn-200: #fde68a;
+  --color-warn-800: #92400e;
+
+  --radius-card: 0.875rem;
+
+  /* One soft shadow, used sparingly. */
+  --shadow-card: 0 1px 2px 0 rgb(16 24 40 / 0.04), 0 1px 3px 0 rgb(16 24 40 / 0.06);
+  --shadow-raised: 0 4px 12px -2px rgb(16 24 40 / 0.08), 0 2px 4px -2px rgb(16 24 40 / 0.04);
+
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  /* Prices and figures use tabular numerals so columns align and a changing
+     price does not make the layout twitch. */
+  --font-numeric: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-ink-900);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* A single, consistent, always-visible focus ring. Keyboard users must never
+     have to guess where they are. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-700);
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
+
+  /* Remove the ring for pointer interaction only, never for keyboards. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: -0.014em;
+    color: var(--color-ink-900);
+  }
+
+  p {
+    margin: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Honour a user's reduced-motion preference. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Skip link: visible only once focused. */
+@utility skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+
+  &:focus {
+    left: 1rem;
+    top: 1rem;
+    padding: 0.625rem 1rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-line-strong);
+    border-radius: 0.5rem;
+    box-shadow: var(--shadow-raised);
+  }
+}
