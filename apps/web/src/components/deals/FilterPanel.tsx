@@ -24,7 +24,22 @@ export const SORT_LABELS: Record<DealSort, string> = {
   'lowest-price': 'Lowest price',
   'highest-price': 'Highest price',
   'recently-updated': 'Recently updated',
+  // Names shipping explicitly, because "lowest price" and "lowest delivered
+  // price" routinely identify different stores and the label is the only thing
+  // telling the user which question they just asked.
+  'lowest-delivered': 'Lowest delivered price',
 };
+
+/**
+ * Sort options offered when no delivery destination is selected.
+ *
+ * `lowest-delivered` is withheld rather than shown-and-degraded: offering a sort
+ * that cannot do what its name says is worse than not offering it. The
+ * destination-aware surfaces add it back.
+ */
+export const SORT_OPTIONS_WITHOUT_DESTINATION = DEAL_SORT_OPTIONS.filter(
+  (option) => option !== 'lowest-delivered',
+);
 
 export interface FilterPanelProps {
   meta: MetaResponse | undefined;
@@ -160,9 +175,19 @@ export function FilterPanel({ meta, values, onApply, onClear, onClose }: FilterP
 export interface SortSelectProps {
   value: DealSort;
   onChange: (value: DealSort) => void;
+  /**
+   * Which options to offer. Defaults to the set that works without a delivery
+   * destination, so a page that has not opted into destination awareness cannot
+   * accidentally present a sort that has nothing to sort on.
+   */
+  options?: readonly DealSort[];
 }
 
-export function SortSelect({ value, onChange }: SortSelectProps) {
+export function SortSelect({
+  value,
+  onChange,
+  options = SORT_OPTIONS_WITHOUT_DESTINATION,
+}: SortSelectProps) {
   return (
     <Field label="Sort by" hideLabel className="min-w-48">
       {(fieldProps) => (
@@ -173,7 +198,7 @@ export function SortSelect({ value, onChange }: SortSelectProps) {
           onChange={(event) => onChange(event.target.value as DealSort)}
           className="h-10"
         >
-          {DEAL_SORT_OPTIONS.map((option) => (
+          {options.map((option) => (
             <option key={option} value={option}>
               Sort: {SORT_LABELS[option]}
             </option>

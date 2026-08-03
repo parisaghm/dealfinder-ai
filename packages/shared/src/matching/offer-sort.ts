@@ -106,7 +106,14 @@ export interface ComparableOffer extends SortableOffer {
   storeName: string;
 }
 
-const PURCHASABLE = new Set(['IN_STOCK', 'LOW_STOCK', 'PREORDER']);
+/**
+ * Availability states a shopper can actually act on.
+ *
+ * Exported so the destination-aware comparison in `delivered-sort.ts` applies
+ * the identical rule. Two definitions of "buyable" would drift, and the drift
+ * would show up as the two pages recommending different stores.
+ */
+export const PURCHASABLE = new Set(['IN_STOCK', 'LOW_STOCK', 'PREORDER']);
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;

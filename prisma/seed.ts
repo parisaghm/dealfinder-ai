@@ -168,13 +168,25 @@ async function seedWatchlist(userId: string) {
     });
     if (!product) continue;
 
+    // Tracking identity now includes destination and currency. The seeded items
+    // are Finnish EUR targets, which is exactly what they were before the columns
+    // existed — the defaults make this an unchanged upsert, not a new row.
     await prisma.watchlistItem.upsert({
-      where: { userId_productId: { userId, productId: product.id } },
+      where: {
+        userId_productId_destinationCountry_preferredCurrency: {
+          userId,
+          productId: product.id,
+          destinationCountry: 'FI',
+          preferredCurrency: 'EUR',
+        },
+      },
       create: {
         userId,
         productId: product.id,
         targetPrice: pick.targetPrice,
         alertsEnabled: pick.alertsEnabled,
+        destinationCountry: 'FI',
+        preferredCurrency: 'EUR',
       },
       update: { targetPrice: pick.targetPrice, alertsEnabled: pick.alertsEnabled },
     });

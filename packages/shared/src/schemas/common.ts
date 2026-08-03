@@ -10,7 +10,15 @@ import { z } from 'zod';
  * development instead of surfacing as `undefined` deep inside a component.
  */
 
-export const CURRENCIES = ['EUR', 'SEK', 'NOK', 'DKK', 'USD'] as const;
+/**
+ * Currencies the application can represent.
+ *
+ * Appended to rather than reordered: `CHF` and `GBP` arrived with the European
+ * expansion, for Switzerland and the United Kingdom. Those two destinations are
+ * modelled but not yet selectable — their currencies exist so the country table
+ * can name them honestly rather than defaulting to EUR.
+ */
+export const CURRENCIES = ['EUR', 'SEK', 'NOK', 'DKK', 'USD', 'CHF', 'GBP'] as const;
 export const currencySchema = z.enum(CURRENCIES);
 export type Currency = z.infer<typeof currencySchema>;
 

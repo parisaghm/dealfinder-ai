@@ -76,6 +76,19 @@ enum MatchCandidateStatus {
   SUPERSEDED
 }
 
+/// Whether an order can attract customs duty or import VAT beyond the price shown.
+///
+/// `POSSIBLE` and `UNKNOWN` are deliberately distinct. `POSSIBLE` means we know
+/// the shipment crosses a customs border, so a charge is likely and we say so.
+/// `UNKNOWN` means we could not determine the route at all. Collapsing them
+/// would either suppress a real warning or attach one to every domestic order.
+enum ImportDutyStatus {
+  NONE
+  INCLUDED
+  POSSIBLE
+  UNKNOWN
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Models
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,10 +126,69 @@ model UserSettings {
   preferredCategories String[] @default([])
 
   currency  String   @default("EUR")
+
+  /// Destination and presentation defaults.
+  ///
+  /// `defaultStoreRegion` is "local" so an existing user's experience is
+  /// unchanged: local stores for their own country is exactly what the product did
+  /// before it understood countries at all.
+  defaultCountryCode String @default("FI")
+  defaultStoreRegion String @default("local")
+
+  /// Non-EU orders can attract customs duty and import VAT that cannot always be
+  /// calculated, so they are opt-in rather than on by default.
+  includeNonEuStores Boolean @default(false)
+
+  /// Offers with no published delivery cost are hidden by default. They can never
+  /// win a cheapest-delivered comparison, and showing them unasked invites
+  /// reading an unknown cost as a low one.
+  showUnknownShipping Boolean @default(false)
+
+  /// Whether to warn when import charges may apply. On by default: the warning
+  /// exists to prevent a nasty surprise at the door.
+  warnAboutImportCharges Boolean @default(true)
+
+  /// One of the DELIVERY_TIME_PREFERENCES values in packages/shared.
+  deliveryTimePreference String @default("any")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("user_settings")
+}
+
+/// A delivery destination, or a country modelled in advance of supporting one.
+///
+/// Mirrors the static table in packages/shared/src/countries, which remains the
+/// source of truth. It exists in the database so offers can carry a foreign key
+/// and be joined on, and the mirror is asserted against the static table at
+/// startup rather than trusted.
+model Country {
+  /// ISO 3166-1 alpha-2.
+  code String @id
+
+  name     String @unique
+  currency String
+
+  isEuMember  Boolean
+  isEeaMember Boolean
+
+  /// False for a country that is modelled but not yet selectable as a
+  /// destination. No StoreOffer rows are generated for these, so "modelled" and
+  /// "not deliverable" stay consistent without a second flag.
+  isSupported Boolean @default(false)
+
+  /// Standard rate, as a reference value for estimating import VAT. Not a tax
+  /// calculation anyone should rely on — see the shared table's comment.
+  standardVatPercent Decimal @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  storeOffers StoreOffer[]
+
+  @@index([isSupported])
+  @@map("countries")
 }
 
 model Store {
@@ -129,13 +201,206 @@ model Store {
   logoUrl    String?
   isActive   Boolean @default(true)
 
+  /// Where the store itself trades from. Nullable because it was added after the
+  /// three original Finnish stores existed; the backfill sets those to FI.
+  countryCode String?
+
+  /// Breadth of the store's own declared delivery network: domestic only,
+  /// Nordic, or pan-European. Displayed in the store listing.
+  ///
+  /// NOT what search filters on. The region filter is computed from store country
+  /// versus the shopper's destination, because "local" has to mean local *to the
+  /// shopper* — a German store is local to a German buyer and foreign to a Finn,
+  /// and no single column can say both.
+  region String @default("local")
+
+  /// Currencies the store can quote in.
+  supportedCurrencies String[] @default([])
+
+  /// Coarse capability metadata: where the store says it delivers.
+  ///
+  /// Explicitly NOT proof that any given product can be delivered. That requires
+  /// a StoreOffer row for the (product, country, currency) tuple. A store may
+  /// declare FI and still have products with no Finnish offer, and presenting
+  /// those as deliverable would be a claim we cannot support.
+  supportedDeliveryCountries String[] @default([])
+
+  /// Where the store is registered for VAT, which governs how tax appears in its
+  /// prices. Nullable: not every source publishes it.
+  vatRegistrationCountry String?
+
+  /// How this store's data is obtained — mirrors ProviderSourceKind.
+  dataSourceType String @default("mock")
+
+  /// True for the fictional retailers that make the European comparison
+  /// demonstrable offline. Surfaced in the UI, the seed and the README so
+  /// synthetic prices are never mistaken for real commercial data.
+  isDemoStore Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  products Product[]
+  products    Product[]
+  storeOffers StoreOffer[]
 
   @@index([isActive])
+  @@index([countryCode])
+  @@index([region])
   @@map("stores")
+}
+
+/// What one store listing costs to have delivered to one country.
+///
+/// The authority on deliverability. A product is deliverable to a country if and
+/// only if a row exists here; `Store.supportedDeliveryCountries` is a coarse
+/// declaration and is never sufficient.
+///
+/// One listing has many rows, because the answer genuinely differs by
+/// destination. The same German listing at €299 may be free to Germany, €12.90 to
+/// Finland, €18.90 to Sweden, and simply unavailable to Spain — and that last
+/// case is represented by the absence of a row, not by a flag.
+model StoreOffer {
+  id String @id @default(cuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Denormalised from `product.storeId` so destination queries can filter and
+  /// count by store without a join back through Product.
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  countryCode String
+  country     Country @relation(fields: [countryCode], references: [code])
+
+  /// The currency this offer is quoted in — the store's own, not the shopper's.
+  /// Conversion to a display currency happens at read time and is never stored,
+  /// so a rate change cannot silently rewrite history.
+  currency String
+
+  productPrice  Decimal  @db.Decimal(10, 2)
+  originalPrice Decimal? @db.Decimal(10, 2)
+
+  /// Null means the store does not publish a delivery cost to this country.
+  ///
+  /// Null is not zero and must never be rendered as free. It is the single most
+  /// common way a comparison tool ends up recommending the dearest option, and
+  /// it is why `totalDeliveredPrice` below is nullable too.
+  shippingPrice Decimal? @db.Decimal(10, 2)
+
+  /// Whether the quoted price already contains the tax the buyer will owe. Null
+  /// means the route's tax treatment could not be determined, which the UI must
+  /// render differently from "tax is not included".
+  taxesIncluded       Boolean?
+  estimatedTax        Decimal?         @db.Decimal(10, 2)
+  importDutyStatus    ImportDutyStatus @default(UNKNOWN)
+  estimatedImportFees Decimal?         @db.Decimal(10, 2)
+
+  /// productPrice + known shipping + known tax + known duty, or null.
+  ///
+  /// Null whenever shipping is unpublished. Maintained on write rather than
+  /// computed per request so that `[countryCode, totalDeliveredPrice]` can be an
+  /// index and `sort=lowest-delivered` stays a SQL sort applied *before*
+  /// pagination — the same reasoning that made `Product.discountPercent` a
+  /// maintained column.
+  totalDeliveredPrice Decimal? @db.Decimal(10, 2)
+
+  availability Availability @default(UNKNOWN)
+
+  /// Business days, as the store estimates them. Null means not published, which
+  /// is distinct from "fast".
+  deliveryMinDays Int?
+  deliveryMaxDays Int?
+
+  lastCheckedAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  priceHistory StoreOfferPriceHistory[]
+
+  /// One offer per listing per destination per currency.
+  ///
+  /// Currency is part of the key because a store legitimately quotes the same
+  /// product in more than one currency, and those are different offers with
+  /// different totals — not duplicates to be collapsed.
+  @@unique([productId, countryCode, currency])
+  /// The index that makes destination-aware sorting a SQL sort.
+  @@index([countryCode, totalDeliveredPrice])
+  @@index([countryCode, currency])
+  @@index([countryCode, deliveryMaxDays])
+  @@index([storeId])
+  @@index([productId])
+  @@map("store_offers")
+}
+
+/// One observed state of a destination-specific offer.
+///
+/// Product.priceHistory records the item price only, and deliberately so. It
+/// cannot serve this purpose: shipping, tax, currency and the delivered total all
+/// vary by destination, and reinterpreting an item-price series as though it
+/// contained them would be inventing data. So destination history is its own
+/// series, and it begins when destination-aware checking begins rather than being
+/// backfilled from figures that never described a destination.
+model StoreOfferPriceHistory {
+  id String @id @default(cuid())
+
+  storeOfferId String
+  storeOffer   StoreOffer @relation(fields: [storeOfferId], references: [id], onDelete: Cascade)
+
+  productPrice        Decimal  @db.Decimal(10, 2)
+  shippingPrice       Decimal? @db.Decimal(10, 2)
+  estimatedTax        Decimal? @db.Decimal(10, 2)
+  estimatedImportFees Decimal? @db.Decimal(10, 2)
+  totalDeliveredPrice Decimal? @db.Decimal(10, 2)
+
+  /// Both currencies are recorded, along with the rate and its timestamp, so a
+  /// historical point can be re-explained later. Storing only the converted
+  /// figure would make the series unauditable the moment rates moved.
+  originalCurrency      String
+  displayCurrency       String
+  exchangeRate          Decimal?  @db.Decimal(18, 8)
+  exchangeRateTimestamp DateTime?
+
+  availability Availability
+  recordedAt   DateTime     @default(now())
+
+  @@index([storeOfferId, recordedAt])
+  @@index([recordedAt])
+  @@map("store_offer_price_history")
+}
+
+/// A recorded exchange rate.
+///
+/// Rates are persisted with their timestamp because a converted price shown
+/// without one is a number the user has no way to judge. The application must
+/// work with no live FX feed at all, so a seeded static table is a supported
+/// configuration — provided the timestamps are honest and the UI says how old
+/// they are.
+model ExchangeRate {
+  id String @id @default(cuid())
+
+  baseCurrency  String
+  quoteCurrency String
+
+  /// Units of quoteCurrency per 1 unit of baseCurrency. Decimal, not float:
+  /// this value multiplies money.
+  rate Decimal @db.Decimal(18, 8)
+
+  /// When the rate was observed — not when the row was written.
+  fetchedAt DateTime
+
+  /// Provenance, e.g. "seed" or "ecb". Plain text so a new source needs no
+  /// migration.
+  source String @default("seed")
+
+  createdAt DateTime @default(now())
+
+  /// One row per pair per observation. Re-running a fetch for the same instant is
+  /// an upsert rather than a duplicate factory; a later observation is a new row,
+  /// which is what keeps this an audit trail rather than a cache.
+  @@unique([baseCurrency, quoteCurrency, fetchedAt])
+  @@index([baseCurrency, quoteCurrency, fetchedAt])
+  @@map("exchange_rates")
 }
 
 model Product {
@@ -213,6 +478,11 @@ model Product {
   watchlistItems  WatchlistItem[]
   notifications   Notification[]
   matchCandidates ProductMatchCandidate[]
+
+  /// Per-destination pricing. Empty means this listing has not been evaluated for
+  /// any destination yet — a valid state, and one that correctly reads as "not
+  /// known to be deliverable anywhere".
+  storeOffers StoreOffer[]
 
   @@unique([storeId, externalId])
   @@index([storeId])
@@ -360,17 +630,47 @@ model WatchlistItem {
   targetPrice   Decimal? @db.Decimal(10, 2)
   alertsEnabled Boolean  @default(true)
 
+  /// Where the user wants it delivered, and the currency their target is
+  /// expressed in.
+  ///
+  /// NOT NULL with defaults, deliberately. Postgres treats NULLs as distinct in a
+  /// unique index, so nullable columns here would let two rows with a NULL
+  /// destination coexist and would silently destroy the "track a product once per
+  /// destination" guarantee. The defaults make every pre-existing row valid and
+  /// unchanged in meaning.
+  destinationCountry String @default("FI")
+  preferredCurrency  String @default("EUR")
+
+  /// Target on the *delivered* total rather than the list price.
+  ///
+  /// Separate from `targetPrice` rather than replacing it: they are different
+  /// questions ("notify me when it costs €300" vs "when the sticker says €300"),
+  /// existing rows mean the second one, and silently reinterpreting them would
+  /// change when every current alert fires.
+  targetDeliveredPrice Decimal? @db.Decimal(10, 2)
+
   /// When the user was last emailed about this item; drives the alert cooldown.
   lastAlertedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  /// A user can track a given product once.
-  @@unique([userId, productId])
+  /// A user can track a given product once *per destination and currency*.
+  ///
+  /// Wider than the original `[userId, productId]`, not stricter: it deliberately
+  /// admits several rows for one product so Finland and Germany can be tracked
+  /// independently. The currency is part of the identity because
+  /// `targetDeliveredPrice` is currency-specific — "below €300" and "below
+  /// 3 200 kr" are different thresholds and cannot share a row without one of
+  /// them becoming a lossy conversion.
+  ///
+  /// Named explicitly because Prisma's generated name would exceed Postgres's
+  /// 63-character identifier limit.
+  @@unique([userId, productId, destinationCountry, preferredCurrency], map: "watchlist_items_user_product_destination_key")
   @@index([userId])
   @@index([alertsEnabled])
   @@index([productId])
+  @@index([destinationCountry])
   @@map("watchlist_items")
 }
 
@@ -389,6 +689,13 @@ model SavedSearch {
   stores          String[] @default([])
   vertical        String   @default("electronics")
   alertsEnabled   Boolean  @default(false)
+
+  /// Destination context, so a saved search reproduces the results it was saved
+  /// from. Nullable: a search saved before destinations existed had none, and
+  /// inventing one would change what it returns.
+  destinationCountry String?
+  preferredCurrency  String?
+  storeRegion        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -418,6 +725,15 @@ model Notification {
   /// for the same unchanged price" can only be implemented by re-parsing
   /// `message`, which is fragile. Stored explicitly instead.
   priceAtAlert Decimal? @db.Decimal(10, 2)
+
+  /// The delivered total and destination that triggered the alert, when the user
+  /// was tracking a delivered price rather than a list price.
+  ///
+  /// Recorded alongside `priceAtAlert` rather than instead of it, so the
+  /// duplicate-suppression logic can compare like with like: a delivered-price
+  /// alert must not be muted by a list-price alert that happened to fire earlier.
+  deliveredPriceAtAlert Decimal? @db.Decimal(10, 2)
+  destinationCountry    String?
 
   sentAt    DateTime?
   error     String?

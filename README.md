@@ -189,13 +189,22 @@ Requires **Node ≥ 22.12** and npm. Docker is **optional**.
 ```bash
 npm install
 cp .env.example .env
-npm run db:dev        # starts a local PostgreSQL — no Docker needed
-npm run db:migrate    # applies migrations, then generates the client
-npm run db:seed       # 42 products with ~3,900 recorded price observations
-npm run dev           # API on :4000, web on :5173
+npm run db:dev             # starts a local PostgreSQL — no Docker needed
+npm run db:deploy          # applies migrations, then generates the client
+npm run db:seed            # ~58 products with recorded price observations
+npm run db:backfill-offers # destination-aware offers for existing products
+npm run dev                # API on :4000, web on :5173
 ```
 
 Open <http://localhost:5173>.
+
+> **`npm run db:migrate` does not work in this environment.** `DATABASE_URL`
+> points at `template1`, which PostgreSQL uses as the template for every new
+> database, so Prisma's shadow database is created non-empty and replaying the
+> initial migration into it fails. Use `db:deploy` to apply and `db:diff` to
+> inspect — both avoid the shadow database. Full explanation, the migration
+> workflow, and the follow-up task to move onto a dedicated `dealfinder_dev`
+> database are in **[docs/database-environment.md](docs/database-environment.md)**.
 
 ### Two ways to run PostgreSQL
 
@@ -270,7 +279,10 @@ is rejected at startup instead of silently never firing.
 | `npm run typecheck` | TypeScript across every workspace |
 | `npm run lint` / `npm run format` | ESLint / Prettier |
 | `npm run db:dev` / `db:dev:stop` | Start/stop the local database |
-| `npm run db:migrate` / `db:seed` / `db:reset` / `db:studio` | Database tasks |
+| `npm run db:deploy` / `db:diff` | Apply migrations / inspect pending SQL ([why not `db:migrate`](docs/database-environment.md)) |
+| `npm run db:seed` / `db:backfill-offers` / `db:match` / `db:studio` | Database tasks |
+| `npm run check:migrations` | Assert every migration is additive and safely ordered |
+| ~~`npm run db:reset`~~ | **Do not run.** Drops the schema; see [docs/database-environment.md](docs/database-environment.md) |
 | `npm test` | Unit + API + component suites |
 | `npm run test:e2e` | Playwright end-to-end |
 

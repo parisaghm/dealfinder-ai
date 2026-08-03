@@ -2,7 +2,7 @@ import type {
   CanonicalProductsQuery,
   ClearDataInput,
   CreateSavedSearchInput,
-  CreateWatchlistItemInput,
+  CreateWatchlistItemPayload,
   DealsQuery,
   MatchCandidatesQuery,
   MatchDecisionBody,
@@ -156,7 +156,7 @@ function useTrackingInvalidation() {
 export function useAddToWatchlist() {
   const invalidate = useTrackingInvalidation();
   return useMutation({
-    mutationFn: (input: CreateWatchlistItemInput) => api.addToWatchlist(input),
+    mutationFn: (input: CreateWatchlistItemPayload) => api.addToWatchlist(input),
     onSuccess: invalidate,
   });
 }

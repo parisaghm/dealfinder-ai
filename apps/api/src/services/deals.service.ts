@@ -61,6 +61,13 @@ const SORT_ORDER: Record<DealSort, Prisma.ProductOrderByWithRelationInput[]> = {
   'lowest-price': [{ currentPrice: 'asc' }, { id: 'asc' }],
   'highest-price': [{ currentPrice: 'desc' }, { id: 'asc' }],
   'recently-updated': [{ lastCheckedAt: 'desc' }, { id: 'asc' }],
+  // `lowest-delivered` needs a delivered total, which only exists per
+  // destination on `StoreOffer`. On this path — a search with no `country` — there
+  // is no destination, so there is nothing to sort on and it degrades to the
+  // nearest honest equivalent rather than silently returning an arbitrary order.
+  // The destination-aware branch has its own ordering over the indexed
+  // `StoreOffer.totalDeliveredPrice` column.
+  'lowest-delivered': [{ currentPrice: 'asc' }, { id: 'asc' }],
 };
 
 export interface SearchDealsOptions {

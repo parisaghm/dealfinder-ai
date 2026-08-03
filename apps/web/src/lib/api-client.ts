@@ -25,7 +25,7 @@ import {
   type ClearDataInput,
   type ClearDataResponse,
   type CreateSavedSearchInput,
-  type CreateWatchlistItemInput,
+  type CreateWatchlistItemPayload,
   type DashboardResponse,
   type DealsQuery,
   type DealsResponse,
@@ -291,7 +291,7 @@ export const api = {
   watchlist: (signal?: AbortSignal): Promise<WatchlistResponse> =>
     request('/api/watchlist', watchlistResponseSchema, { signal }),
 
-  addToWatchlist: (body: CreateWatchlistItemInput): Promise<WatchlistItem> =>
+  addToWatchlist: (body: CreateWatchlistItemPayload): Promise<WatchlistItem> =>
     request('/api/watchlist', watchlistItemSchema, { method: 'POST', body }),
 
   updateWatchlistItem: (id: string, body: UpdateWatchlistItemInput): Promise<WatchlistItem> =>

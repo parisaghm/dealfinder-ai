@@ -18,6 +18,8 @@ export * from './generated/prisma/client';
 export { Prisma, PrismaClient };
 
 export * from './ingestion';
+export * from './offers';
+export * from './countries';
 export * from './matching';
 
 export interface CreatePrismaClientOptions {
