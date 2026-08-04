@@ -31,6 +31,7 @@
     "db:seed": "prisma db seed",
     "db:match": "tsx prisma/match.ts",
     "db:backfill-offers": "tsx prisma/backfill-offers.ts",
+    "db:counts": "tsx prisma/counts.ts",
     "check:migrations": "vitest run --root apps/api tests/migration-safety.test.ts",
     "db:reset": "prisma migrate reset --force && prisma generate && prisma db seed",
     "db:studio": "prisma studio",

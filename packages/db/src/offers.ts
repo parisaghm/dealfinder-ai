@@ -18,7 +18,7 @@ import type { Availability, PrismaClient } from './generated/prisma/client';
  *
  * Like ingestion, the input is described structurally rather than importing
  * `ExternalStoreOffer` from the providers package, so the dependency arrow keeps
- * pointing one way: providers → API → db.
+ * pointing one way: providers -> API -> db.
  */
 
 export interface StoreOfferUpsertInput {
@@ -26,7 +26,7 @@ export interface StoreOfferUpsertInput {
   storeId: string;
   /** Where the parcel is going. */
   countryCode: string;
-  /** Where the store trades from — drives the tax and duty determination. */
+  /** Where the store trades from -- drives the tax and duty determination. */
   storeCountryCode: string;
   /** The currency the store quotes in, not the shopper's display currency. */
   currency: string;
@@ -40,7 +40,7 @@ export interface StoreOfferUpsertInput {
    * Overrides for the tax and duty determination.
    *
    * Normally omitted, in which case they are derived from the route by the shared
-   * country rules — one implementation, so a provider cannot accidentally claim a
+   * country rules -- one implementation, so a provider cannot accidentally claim a
    * cross-border order is duty-free.
    */
   taxesIncluded?: boolean | null;
@@ -74,7 +74,7 @@ export interface UpsertStoreOfferOptions {
  * arithmetic. All of it happens in integer minor units; `toMajor` is applied once
  * at the end, for the Decimal column.
  *
- * Returns null whenever shipping is unpublished — an unknown delivery cost means
+ * Returns null whenever shipping is unpublished -- an unknown delivery cost means
  * an unknown total, and substituting zero would present the least informative
  * offer as the cheapest.
  */
@@ -227,34 +227,80 @@ export async function upsertStoreOfferFromSource(
   };
 }
 
+export interface StoreOfferObservation {
+  productPrice: number;
+  shippingPrice?: number | null;
+  estimatedTax?: number | null;
+  estimatedImportFees?: number | null;
+  /** The currency the amounts above are expressed in -- the store's own. */
+  currency: string;
+  availability: Availability;
+  recordedAt: Date;
+  /**
+   * The currency this observation was *compared* in, and the rate used.
+   *
+   * The money columns always hold the store's own figures; these three record how
+   * they were converted for comparison at the time. Storing only the converted
+   * value would make the series unauditable the moment rates moved -- you could no
+   * longer tell a price change from a currency move.
+   *
+   * Omit all three for a same-currency offer, which needs no rate.
+   */
+  displayCurrency?: string;
+  exchangeRate?: number | null;
+  exchangeRateTimestamp?: Date | null;
+}
+
 /** Append a single destination-aware observation. Used when replaying a series. */
 export async function recordStoreOfferObservation(
   prisma: PrismaClient,
   storeOfferId: string,
-  observation: {
-    productPrice: number;
-    shippingPrice?: number | null;
-    estimatedTax?: number | null;
-    estimatedImportFees?: number | null;
-    currency: string;
-    availability: Availability;
-    recordedAt: Date;
-  },
+  observation: StoreOfferObservation,
 ): Promise<void> {
   await prisma.storeOfferPriceHistory.create({
-    data: {
-      storeOfferId,
-      productPrice: observation.productPrice,
-      shippingPrice: observation.shippingPrice ?? null,
-      estimatedTax: observation.estimatedTax ?? null,
-      estimatedImportFees: observation.estimatedImportFees ?? null,
-      totalDeliveredPrice: computeDeliveredTotal(observation),
-      originalCurrency: observation.currency,
-      displayCurrency: observation.currency,
-      exchangeRate: null,
-      exchangeRateTimestamp: null,
-      availability: observation.availability,
-      recordedAt: observation.recordedAt,
-    },
+    data: buildObservationRow(storeOfferId, observation),
   });
+}
+
+/**
+ * Replay a whole series in one statement.
+ *
+ * A synthetic series is ~90 points per offer, and the demo catalogue has hundreds
+ * of offers. One round trip per point would make seeding take minutes against the
+ * single-connection development database.
+ */
+export async function recordStoreOfferSeries(
+  prisma: PrismaClient,
+  storeOfferId: string,
+  observations: readonly StoreOfferObservation[],
+): Promise<number> {
+  if (observations.length === 0) return 0;
+
+  // Replace rather than append: re-seeding must not double the series. The offer's
+  // history is wholly derived from its dataset definition, so rewriting it is the
+  // idempotent operation.
+  await prisma.storeOfferPriceHistory.deleteMany({ where: { storeOfferId } });
+
+  const result = await prisma.storeOfferPriceHistory.createMany({
+    data: observations.map((observation) => buildObservationRow(storeOfferId, observation)),
+  });
+
+  return result.count;
+}
+
+function buildObservationRow(storeOfferId: string, observation: StoreOfferObservation) {
+  return {
+    storeOfferId,
+    productPrice: observation.productPrice,
+    shippingPrice: observation.shippingPrice ?? null,
+    estimatedTax: observation.estimatedTax ?? null,
+    estimatedImportFees: observation.estimatedImportFees ?? null,
+    totalDeliveredPrice: computeDeliveredTotal(observation),
+    originalCurrency: observation.currency,
+    displayCurrency: observation.displayCurrency ?? observation.currency,
+    exchangeRate: observation.exchangeRate ?? null,
+    exchangeRateTimestamp: observation.exchangeRateTimestamp ?? null,
+    availability: observation.availability,
+    recordedAt: observation.recordedAt,
+  };
 }
