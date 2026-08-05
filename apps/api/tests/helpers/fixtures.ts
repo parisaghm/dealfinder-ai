@@ -1,4 +1,9 @@
-import { getPrismaClient, type PrismaClient } from '@deal-finder/db';
+import {
+  getPrismaClient,
+  recordStoreOfferSeries,
+  upsertStoreOfferFromSource,
+  type PrismaClient,
+} from '@deal-finder/db';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -36,7 +41,28 @@ export interface TestContext {
   cleanup: () => Promise<void>;
 }
 
-export async function createTestContext(): Promise<TestContext> {
+/**
+ * Destination metadata for the two fixture stores.
+ *
+ * Every field is optional and every default reproduces the pre-expansion
+ * fixture exactly: no country, no declared delivery network, not a demo store.
+ * A store with no `countryCode` cannot be placed in any region, so it is invisible
+ * to destination-aware search — which is precisely why the existing suites, which
+ * pass no options, are unaffected by any of this.
+ */
+export interface CreateTestContextOptions {
+  storeCountry?: string;
+  storeCurrency?: string;
+  storeDeliversTo?: readonly string[];
+  secondStoreCountry?: string;
+  secondStoreCurrency?: string;
+  secondStoreDeliversTo?: readonly string[];
+  secondStoreIsDemo?: boolean;
+}
+
+export async function createTestContext(
+  options: CreateTestContextOptions = {},
+): Promise<TestContext> {
   const id = randomUUID().slice(0, 8);
   const userEmail = `test-${id}@dealfinder.test`;
   const storeSlug = `test-store-${id}`;
@@ -54,6 +80,12 @@ export async function createTestContext(): Promise<TestContext> {
       name: `Test Store ${id}`,
       websiteUrl: `https://${storeSlug}.test`,
       isActive: true,
+      countryCode: options.storeCountry ?? null,
+      supportedCurrencies: options.storeCurrency ? [options.storeCurrency] : [],
+      // Declared reach. Deliberately settable independently of the offers a test
+      // creates, because "declares FI but has no FI offer" is a case that has to
+      // be constructible.
+      supportedDeliveryCountries: [...(options.storeDeliversTo ?? [])],
     },
     select: { id: true },
   });
@@ -64,6 +96,10 @@ export async function createTestContext(): Promise<TestContext> {
       name: `Test Store B ${id}`,
       websiteUrl: `https://${secondStoreSlug}.test`,
       isActive: true,
+      countryCode: options.secondStoreCountry ?? null,
+      supportedCurrencies: options.secondStoreCurrency ? [options.secondStoreCurrency] : [],
+      supportedDeliveryCountries: [...(options.secondStoreDeliversTo ?? [])],
+      isDemoStore: options.secondStoreIsDemo ?? false,
     },
     select: { id: true },
   });
@@ -111,6 +147,8 @@ export interface CreateProductOptions {
   mpn?: string | null;
   modelNumber?: string | null;
   attributes?: Record<string, unknown> | null;
+  /** The currency the store quotes in. Defaults to EUR, as it always did. */
+  currency?: string;
 }
 
 export async function createTestProduct(
@@ -134,7 +172,7 @@ export async function createTestProduct(
       currentPrice,
       originalPrice: options.originalPrice ?? null,
       shippingPrice: options.shippingPrice ?? null,
-      currency: 'EUR',
+      currency: options.currency ?? 'EUR',
       discountPercent: options.discountPercent ?? 0,
       availability: options.availability ?? 'IN_STOCK',
       lastCheckedAt: options.lastCheckedAt ?? new Date(),
@@ -154,7 +192,7 @@ export async function createTestProduct(
       data: options.history.map((price, index) => ({
         productId: product.id,
         price,
-        currency: 'EUR',
+        currency: options.currency ?? 'EUR',
         recordedAt: new Date(now - (count - 1 - index) * 86_400_000),
       })),
     });
@@ -166,7 +204,19 @@ export async function createTestProduct(
 export async function trackProduct(
   context: TestContext,
   productId: string,
-  options: { targetPrice?: number | null; alertsEnabled?: boolean; lastAlertedAt?: Date | null } = {},
+  options: {
+    targetPrice?: number | null;
+    alertsEnabled?: boolean;
+    lastAlertedAt?: Date | null;
+    /**
+     * Destination tracking. Omitted, the row takes the column defaults `FI`/`EUR`
+     * with no delivered target — which is exactly what every pre-existing
+     * watchlist item means, so the existing suites see no change.
+     */
+    destinationCountry?: string;
+    preferredCurrency?: string;
+    targetDeliveredPrice?: number | null;
+  } = {},
 ): Promise<string> {
   const item = await prisma.watchlistItem.create({
     data: {
@@ -175,8 +225,87 @@ export async function trackProduct(
       targetPrice: options.targetPrice ?? null,
       alertsEnabled: options.alertsEnabled ?? true,
       lastAlertedAt: options.lastAlertedAt ?? null,
+      ...(options.destinationCountry ? { destinationCountry: options.destinationCountry } : {}),
+      ...(options.preferredCurrency ? { preferredCurrency: options.preferredCurrency } : {}),
+      targetDeliveredPrice: options.targetDeliveredPrice ?? null,
     },
     select: { id: true },
   });
   return item.id;
+}
+
+export interface CreateTestOfferOptions {
+  /** Where the parcel goes. Defaults to Finland. */
+  countryCode?: string;
+  /** Where the store trades from. Drives the tax and duty determination. */
+  storeCountryCode?: string;
+  currency?: string;
+  productPrice?: number;
+  originalPrice?: number | null;
+  /** Null means the store publishes no delivery cost — never treated as zero. */
+  shippingPrice?: number | null;
+  availability?:
+    | 'IN_STOCK'
+    | 'LOW_STOCK'
+    | 'OUT_OF_STOCK'
+    | 'PREORDER'
+    | 'DISCONTINUED'
+    | 'UNKNOWN';
+  deliveryMinDays?: number | null;
+  deliveryMaxDays?: number | null;
+  /** Recorded observations, oldest first, one day apart ending now. */
+  history?: number[];
+}
+
+/**
+ * A destination-specific offer, written through the real single writer.
+ *
+ * `upsertStoreOfferFromSource` rather than a bare `create`, so a fixture cannot
+ * accidentally construct a state the application can never produce — a delivered
+ * total with no shipping cost, say, which is the exact invariant several of these
+ * tests exist to check.
+ */
+export async function createTestOffer(
+  productId: string,
+  storeId: string,
+  options: CreateTestOfferOptions = {},
+): Promise<string> {
+  const currency = options.currency ?? 'EUR';
+  const countryCode = options.countryCode ?? 'FI';
+
+  const result = await upsertStoreOfferFromSource(
+    prisma,
+    {
+      productId,
+      storeId,
+      countryCode,
+      storeCountryCode: options.storeCountryCode ?? countryCode,
+      currency,
+      productPrice: options.productPrice ?? 100,
+      originalPrice: options.originalPrice ?? null,
+      shippingPrice: options.shippingPrice,
+      availability: options.availability ?? 'IN_STOCK',
+      deliveryMinDays: options.deliveryMinDays ?? null,
+      deliveryMaxDays: options.deliveryMaxDays ?? null,
+    },
+    { skipHistory: true },
+  );
+
+  if (options.history && options.history.length > 0) {
+    const now = Date.now();
+    const count = options.history.length;
+    await recordStoreOfferSeries(
+      prisma,
+      result.offerId,
+      options.history.map((productPrice, index) => ({
+        productPrice,
+        shippingPrice: options.shippingPrice ?? null,
+        currency,
+        availability: options.availability ?? 'IN_STOCK',
+        recordedAt: new Date(now - (count - 1 - index) * 86_400_000),
+      })),
+    );
+  }
+
+  return result.offerId;
 }

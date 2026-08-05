@@ -1,13 +1,18 @@
-import { decimalToNumber, type PrismaClient } from '@deal-finder/db';
+import { decimalToNumber, type Prisma, type PrismaClient } from '@deal-finder/db';
 import {
   CHECK_FREQUENCY_HOURS,
   calculateDiscountPercent,
+  convertWithProvenance,
+  countryName,
+  toMajor,
   type Currency,
 } from '@deal-finder/shared';
 import { renderPriceAlertEmail } from '../email/templates/price-alert';
 import { sendMail, type SendMailResult } from '../email/transport';
 import { env } from '../env';
 import { logger } from '../logger';
+import { moneyFromDecimal } from '../mappers/offer.mapper';
+import { loadRateContext, type RateContext } from './exchange-rate.service';
 
 /**
  * Scheduled price monitoring.
@@ -61,6 +66,28 @@ export interface MonitoringDependencies {
   batchSize?: number;
   /** Overrides `ALERT_COOLDOWN_HOURS`. */
   alertCooldownHours?: number;
+  /**
+   * Overrides the exchange-rate table.
+   *
+   * Injected by tests that need to prove a stale or missing rate suppresses a
+   * delivered-price alert, which is otherwise untestable without waiting days.
+   */
+  rates?: RateContext;
+  /**
+   * Limit the run to these users. Omitted, every user is checked.
+   *
+   * The scheduled job passes nothing, which is the whole point of it. This exists
+   * because a *test* must not: the query below is global by design, so a suite
+   * that called `runPriceCheck` with its own fixtures also picked up the seeded
+   * demo user's watchlist, rewrote those products' prices to whatever the test
+   * had stubbed, and left real alert notifications behind. That corrupted the
+   * shared seeded data every run — including the Sony listing whose exact price
+   * the end-to-end suite asserts.
+   *
+   * It is also a genuine capability rather than a test hook wearing a disguise:
+   * re-checking one user on demand is a thing an operator wants.
+   */
+  userIds?: readonly string[];
 }
 
 export interface MonitoringRunSummary {
@@ -94,7 +121,10 @@ export async function runPriceCheck(
   };
 
   const items = await prisma.watchlistItem.findMany({
-    where: { alertsEnabled: true },
+    where: {
+      alertsEnabled: true,
+      ...(dependencies.userIds ? { userId: { in: [...dependencies.userIds] } } : {}),
+    },
     // Least-recently-checked products first, so a large watchlist is covered
     // evenly across runs instead of always re-checking the same head.
     orderBy: { product: { lastCheckedAt: 'asc' } },
@@ -112,13 +142,43 @@ export async function runPriceCheck(
           shippingPrice: true,
           currency: true,
           lastCheckedAt: true,
-          store: { select: { slug: true, name: true, isActive: true } },
+          store: { select: { slug: true, name: true, isActive: true, countryCode: true } },
+          /**
+           * The destination offers for this listing.
+           *
+           * Selected with the batch rather than looked up per item: one query per
+           * watchlist row is the N+1 this whole include exists to avoid, and a
+           * product has at most a handful of offers. Which one applies is decided
+           * per item, from the destination and currency that item tracks.
+           */
+          storeOffers: {
+            select: {
+              countryCode: true,
+              currency: true,
+              shippingPrice: true,
+              totalDeliveredPrice: true,
+            },
+          },
         },
       },
     },
   });
 
   const currentTime = now();
+
+  /**
+   * One rate table for the whole run, loaded at most once and only if needed.
+   *
+   * Not per item, and certainly not per offer. Lazy because a run containing no
+   * delivered-price targets must issue exactly the queries it always did.
+   * `fresh: true` because the monitor runs every half hour and should read what is
+   * recorded now, not a table cached by a web request minutes ago.
+   */
+  let rates: RateContext | null = dependencies.rates ?? null;
+  const resolveRates = async (): Promise<RateContext> => {
+    rates ??= await loadRateContext(prisma, { fresh: true, now: currentTime.getTime() });
+    return rates;
+  };
 
   for (const item of items) {
     const { product, user } = item;
@@ -196,7 +256,43 @@ export async function runPriceCheck(
       }
 
       const targetPrice = decimalToNumber(item.targetPrice);
-      if (targetPrice == null || newPrice > targetPrice) continue;
+      const targetDeliveredPrice = decimalToNumber(item.targetDeliveredPrice);
+
+      /**
+       * A delivered-price target takes precedence, with no fallback.
+       *
+       * When the user asked to be told about the delivered total, the list price
+       * is not an approximation of it — it is a different number that omits
+       * exactly the cost the user cared about. So if the delivered total cannot be
+       * established, this item simply waits: no email, and specifically no email
+       * derived from `targetPrice` instead.
+       */
+      const trackingDelivered = targetDeliveredPrice != null;
+
+      const delivered = trackingDelivered
+        ? evaluateDeliveredTarget({
+            offers: product.storeOffers,
+            destinationCountry: item.destinationCountry,
+            preferredCurrency: item.preferredCurrency as Currency,
+            targetDeliveredPrice,
+            rates: await resolveRates(),
+            now: currentTime,
+          })
+        : null;
+
+      if (trackingDelivered && (delivered == null || !delivered.reached)) {
+        logger.debug(
+          {
+            productId: product.id,
+            destinationCountry: item.destinationCountry,
+            reason: delivered?.reason,
+          },
+          'Delivered-price target not established as met; waiting',
+        );
+        continue;
+      }
+
+      if (!trackingDelivered && (targetPrice == null || newPrice > targetPrice)) continue;
 
       // ── The target is met. Should we actually alert? ──────────────────────
       const decision = await shouldAlert(prisma, {
@@ -209,6 +305,11 @@ export async function runPriceCheck(
         notifyByEmail: user.settings?.notifyByEmail ?? true,
         notifyOnTargetReached: user.settings?.notifyOnTargetReached ?? true,
         now: currentTime,
+        // Scopes the duplicate check. A delivered-price target for Finland is
+        // evaluated against its own alert history, so it is neither muted by a
+        // German one nor by a list-price alert that happened to fire earlier.
+        destinationCountry: trackingDelivered ? item.destinationCountry : null,
+        deliveredPrice: delivered?.deliveredPrice ?? null,
       });
 
       if (!decision.send) {
@@ -225,7 +326,7 @@ export async function runPriceCheck(
         productName: product.name,
         storeName: product.store.name,
         productUrl: product.productUrl,
-        currency: product.currency as Currency,
+        currency: trackingDelivered ? (item.preferredCurrency as Currency) : (product.currency as Currency),
         currentPrice: newPrice,
         previousPrice: priceChanged ? previousPrice : null,
         targetPrice,
@@ -233,6 +334,16 @@ export async function runPriceCheck(
         discountPercent,
         watchlistItemId: item.id,
         recipientName: user.name,
+        destination:
+          delivered == null
+            ? null
+            : {
+                countryName: countryName(item.destinationCountry),
+                deliveredPrice: delivered.deliveredPrice,
+                targetDeliveredPrice: delivered.target,
+                shippingPrice: delivered.shippingPrice,
+                isConverted: delivered.isConverted,
+              },
       });
 
       const result = await send({
@@ -249,8 +360,16 @@ export async function runPriceCheck(
             productId: product.id,
             type: 'TARGET_REACHED',
             status: result.delivered ? 'SENT' : 'FAILED',
-            message: `${product.name} reached ${newPrice} ${product.currency}, at or below the target of ${targetPrice}.`,
+            message:
+              delivered == null
+                ? `${product.name} reached ${newPrice} ${product.currency}, at or below the target of ${targetPrice}.`
+                : `${product.name} costs ${delivered.deliveredPrice} ${item.preferredCurrency} delivered to ${countryName(item.destinationCountry)}, at or below the target of ${delivered.target}.`,
             priceAtAlert: newPrice,
+            // Both recorded for a delivered alert: the destination is what makes
+            // the row identifiable as one, and the delivered figure is what the
+            // next run compares against.
+            deliveredPriceAtAlert: delivered?.deliveredPrice ?? null,
+            destinationCountry: delivered == null ? null : item.destinationCountry,
             sentAt: result.delivered ? currentTime : null,
             error: result.error ?? null,
           },
@@ -289,6 +408,127 @@ export async function runPriceCheck(
   return summary;
 }
 
+/** The offer columns a delivered-price evaluation needs. */
+interface DeliveredOfferRow {
+  countryCode: string;
+  currency: string;
+  shippingPrice: Prisma.Decimal | null;
+  totalDeliveredPrice: Prisma.Decimal | null;
+}
+
+export interface DeliveredEvaluation {
+  /** True only when the delivered total is known, trustworthy and at or below target. */
+  reached: boolean;
+  /** Why, in words, for the debug log. */
+  reason: string;
+  /** The delivered total in the tracked currency. Meaningless unless `reached`. */
+  deliveredPrice: number;
+  target: number;
+  /** Null when the store publishes no delivery cost. */
+  shippingPrice: number | null;
+  isConverted: boolean;
+}
+
+/**
+ * Whether a delivered-price target has actually been met.
+ *
+ * Five distinct ways this returns "no", and each one exists because saying "yes"
+ * would send an email asserting something we cannot support:
+ *
+ *  1. **No offer for the destination.** Nothing proves the product can be
+ *     delivered there at all, so there is no delivered total to compare.
+ *  2. **Shipping unpublished.** An unknown delivery cost means an unknown total.
+ *     Treating it as zero would fire an alert for a price nobody can pay.
+ *  3. **No exchange rate.** A total in kronor cannot be compared to a target in
+ *     euros without one, and guessing is worse than waiting.
+ *  4. **A stale exchange rate.** Fresh enough to *show*, labelled with its age;
+ *     not fresh enough to send an email claiming a threshold was crossed.
+ *  5. **Above the target.** The ordinary case.
+ *
+ * In none of them does it fall back to the list price.
+ */
+export function evaluateDeliveredTarget(input: {
+  offers: readonly DeliveredOfferRow[];
+  destinationCountry: string;
+  preferredCurrency: Currency;
+  targetDeliveredPrice: number;
+  rates: RateContext;
+  now: Date;
+}): DeliveredEvaluation {
+  const base = {
+    reached: false,
+    deliveredPrice: 0,
+    target: input.targetDeliveredPrice,
+    shippingPrice: null,
+    isConverted: false,
+  };
+
+  const forDestination = input.offers.filter(
+    (offer) => offer.countryCode === input.destinationCountry,
+  );
+  // Prefer the offer already quoted in the tracked currency: it needs no rate and
+  // so cannot be blocked by the state of the FX table.
+  const offer =
+    forDestination.find((candidate) => candidate.currency === input.preferredCurrency) ??
+    forDestination[0];
+
+  if (offer == null) {
+    return { ...base, reason: `no offer proves delivery to ${input.destinationCountry}` };
+  }
+
+  const offerCurrency = offer.currency as Currency;
+  const shipping = moneyFromDecimal(offer.shippingPrice, offerCurrency);
+
+  if (offer.shippingPrice == null || offer.totalDeliveredPrice == null) {
+    return { ...base, reason: 'the store publishes no delivery cost to this destination' };
+  }
+
+  const total = moneyFromDecimal(offer.totalDeliveredPrice, offerCurrency);
+  if (total == null) {
+    return { ...base, reason: 'the recorded delivered total could not be read' };
+  }
+
+  const outcome = convertWithProvenance(total, input.preferredCurrency, input.rates.table, {
+    maxAgeHours: input.rates.maxAgeHours,
+    now: input.now.getTime(),
+  });
+
+  if (outcome.converted == null) {
+    return {
+      ...base,
+      reason: `no exchange rate for ${offerCurrency} to ${input.preferredCurrency}`,
+    };
+  }
+  if (outcome.blocksCheapestClaim) {
+    return {
+      ...base,
+      reason: `the ${offerCurrency} exchange rate is too old to alert on`,
+      isConverted: true,
+    };
+  }
+
+  const deliveredPrice = toMajor(outcome.converted);
+  const convertedShipping =
+    shipping == null
+      ? null
+      : convertWithProvenance(shipping, input.preferredCurrency, input.rates.table, {
+          maxAgeHours: input.rates.maxAgeHours,
+          now: input.now.getTime(),
+        }).converted;
+
+  return {
+    reached: deliveredPrice <= input.targetDeliveredPrice,
+    reason:
+      deliveredPrice <= input.targetDeliveredPrice
+        ? 'delivered total is at or below the target'
+        : 'delivered total is above the target',
+    deliveredPrice,
+    target: input.targetDeliveredPrice,
+    shippingPrice: convertedShipping == null ? null : toMajor(convertedShipping),
+    isConverted: outcome.isEstimate,
+  };
+}
+
 interface AlertDecisionInput {
   watchlistItemId: string;
   productId: string;
@@ -299,6 +539,17 @@ interface AlertDecisionInput {
   notifyByEmail: boolean;
   notifyOnTargetReached: boolean;
   now: Date;
+  /**
+   * The destination this alert is about, or null for a list-price alert.
+   *
+   * Scopes the duplicate check. Without it, a Finnish delivered-price alert and a
+   * German one would share one history and mute each other, and a list-price alert
+   * would mute both. Every pre-existing notification has `null` here, which is
+   * exactly the list-price bucket.
+   */
+  destinationCountry?: string | null;
+  /** The delivered total that met the target, in the tracked currency. */
+  deliveredPrice?: number | null;
 }
 
 /**
@@ -319,27 +570,36 @@ export async function shouldAlert(
     return { send: false, reason: 'user disabled target-reached notifications' };
   }
 
+  const destinationCountry = input.destinationCountry ?? null;
+  const isDelivered = destinationCountry != null && input.deliveredPrice != null;
+
   const lastAlert = await prisma.notification.findFirst({
     where: {
       userId: input.userId,
       productId: input.productId,
       type: 'TARGET_REACHED',
       status: 'SENT',
+      destinationCountry,
     },
     orderBy: { createdAt: 'desc' },
-    select: { priceAtAlert: true, createdAt: true },
+    select: { priceAtAlert: true, deliveredPriceAtAlert: true, createdAt: true },
   });
 
   if (!lastAlert) return { send: true, reason: 'no previous alert' };
 
-  const lastPrice = decimalToNumber(lastAlert.priceAtAlert);
+  // Like compared with like: a delivered-price alert is judged against the last
+  // delivered figure for the same destination, never against a list price.
+  const lastPrice = isDelivered
+    ? decimalToNumber(lastAlert.deliveredPriceAtAlert)
+    : decimalToNumber(lastAlert.priceAtAlert);
+  const price = isDelivered ? (input.deliveredPrice ?? input.price) : input.price;
 
   // A further drop is new information, regardless of the cooldown.
-  if (lastPrice != null && input.price < lastPrice) {
+  if (lastPrice != null && price < lastPrice) {
     return { send: true, reason: 'price dropped further than the last alert' };
   }
 
-  if (lastPrice != null && input.price >= lastPrice) {
+  if (lastPrice != null && price >= lastPrice) {
     const cooldownMs = input.cooldownHours * 3_600_000;
     const elapsed = input.now.getTime() - lastAlert.createdAt.getTime();
     if (elapsed < cooldownMs) {

@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@deal-finder/db';
 import {
+  isDestinationAware,
   parseSearchQuery,
   type AppliedFilters,
   type DealSort,
@@ -8,7 +9,9 @@ import {
 } from '@deal-finder/shared';
 import { toProductSummary, type ProductRow } from '../mappers/product.mapper';
 import { buildDealGroups } from './canonical-product.service';
+import { searchDealsByDestination } from './destination-search.service';
 import { fetchHistoryContext } from './price-history.service';
+import { PRODUCT_SELECT } from './selects';
 
 /**
  * Deal search.
@@ -23,36 +26,15 @@ import { fetchHistoryContext } from './price-history.service';
  * a page would reorder within pages and silently produce wrong results — which
  * is precisely why `discountPercent` is a maintained column rather than an
  * expression computed per request.
+ *
+ * `searchDeals` is now a two-way switch on one thing only: whether the request
+ * named a delivery country. Without one, `searchProductDeals` below runs — the
+ * pre-expansion query, byte for byte, returning the pre-expansion payload with no
+ * destination fields in it at all. With one, the destination-aware branch runs
+ * against `store_offers`. Keeping the legacy body untouched rather than
+ * generalising it is deliberate: it is the reason the existing API and end-to-end
+ * suites still describe real behaviour instead of being re-baselined.
  */
-
-const PRODUCT_SELECT = {
-  id: true,
-  externalId: true,
-  name: true,
-  description: true,
-  brand: true,
-  category: true,
-  vertical: true,
-  attributes: true,
-  imageUrl: true,
-  productUrl: true,
-  currentPrice: true,
-  originalPrice: true,
-  shippingPrice: true,
-  currency: true,
-  discountPercent: true,
-  availability: true,
-  lastCheckedAt: true,
-  createdAt: true,
-  updatedAt: true,
-  // Selected but never emitted in `ProductSummary`: the grouping decoration
-  // needs it, and adding it to the DTO would change a published response shape
-  // for every existing client.
-  canonicalProductId: true,
-  store: {
-    select: { id: true, slug: true, name: true, websiteUrl: true, logoUrl: true, isActive: true },
-  },
-} satisfies Prisma.ProductSelect;
 
 const SORT_ORDER: Record<DealSort, Prisma.ProductOrderByWithRelationInput[]> = {
   // Secondary keys make ordering total: without them, rows tying on the primary
@@ -75,7 +57,28 @@ export interface SearchDealsOptions {
   userId?: string;
 }
 
+/**
+ * The entry point every caller uses. Dispatches on the presence of `country`.
+ */
 export async function searchDeals(
+  prisma: PrismaClient,
+  query: DealsQuery,
+  options: SearchDealsOptions = {},
+): Promise<DealsResponse> {
+  if (isDestinationAware(query)) {
+    return searchDealsByDestination(prisma, query, options);
+  }
+  return searchProductDeals(prisma, query, options);
+}
+
+/**
+ * The pre-expansion search, unmodified.
+ *
+ * Reached only when no delivery country was requested. Nothing inside it knows
+ * about destinations, offers or exchange rates, and nothing it returns mentions
+ * them.
+ */
+export async function searchProductDeals(
   prisma: PrismaClient,
   query: DealsQuery,
   options: SearchDealsOptions = {},

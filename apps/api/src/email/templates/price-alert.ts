@@ -26,6 +26,25 @@ export interface PriceAlertEmailInput {
   recipientName?: string | null;
   /** Set for `POST /api/alerts/test`, which adds a banner. */
   isTest?: boolean;
+  /**
+   * Set when the user was tracking a *delivered* price to a destination rather
+   * than a list price.
+   *
+   * Optional, and absent for every existing alert: a list-price email must read
+   * exactly as it always has. When present, the email names the destination and
+   * the currency, because "under €300" means nothing without saying delivered
+   * where — and a shopper who set a Finnish target must not receive an email that
+   * looks like it is about a German one.
+   */
+  destination?: {
+    countryName: string;
+    deliveredPrice: number;
+    targetDeliveredPrice: number;
+    /** Null means the store publishes no delivery cost. Never rendered as free. */
+    shippingPrice: number | null;
+    /** True when the total was converted from the store's own currency. */
+    isConverted: boolean;
+  } | null;
 }
 
 export interface RenderedEmail {
@@ -84,16 +103,35 @@ export function renderPriceAlertEmail(input: PriceAlertEmailInput): RenderedEmai
       ? input.previousPrice - input.currentPrice
       : null;
 
+  const destination = input.destination ?? null;
+
   const subject = input.isTest
     ? `[Test] Price alert for ${input.productName}`
-    : input.targetPrice != null
-      ? `${input.productName} is now ${money(input.currentPrice)} — your target was ${money(input.targetPrice)}`
-      : `${input.productName} dropped to ${money(input.currentPrice)}`;
+    : destination != null
+      ? `${input.productName} delivered to ${destination.countryName} is now ${money(destination.deliveredPrice)} — your target was ${money(destination.targetDeliveredPrice)}`
+      : input.targetPrice != null
+        ? `${input.productName} is now ${money(input.currentPrice)} — your target was ${money(input.targetPrice)}`
+        : `${input.productName} dropped to ${money(input.currentPrice)}`;
 
   const rows: Array<[string, string]> = [
     ['Store', storeName],
     ['Current price', money(input.currentPrice)],
   ];
+  if (destination != null) {
+    rows.push(['Delivering to', destination.countryName]);
+    rows.push([
+      'Shipping',
+      // "Not published" and "free" are different facts and are never conflated.
+      destination.shippingPrice == null ? 'Not published' : money(destination.shippingPrice),
+    ]);
+    rows.push([
+      'Delivered total',
+      destination.isConverted
+        ? `${money(destination.deliveredPrice)} (converted estimate)`
+        : money(destination.deliveredPrice),
+    ]);
+    rows.push(['Your delivered target', money(destination.targetDeliveredPrice)]);
+  }
   if (input.previousPrice != null) rows.push(['Previous price', money(input.previousPrice)]);
   if (input.targetPrice != null) rows.push(['Your target price', money(input.targetPrice)]);
   if (input.originalPrice != null) rows.push(['Store’s original price', money(input.originalPrice)]);
@@ -135,9 +173,11 @@ export function renderPriceAlertEmail(input: PriceAlertEmailInput): RenderedEmai
         <h1 style="margin:0 0 8px 0;font-size:20px;line-height:1.35;">${productName}</h1>
         <p style="margin:0;font-size:15px;color:${COLORS.muted};">
           ${
-            input.targetPrice != null
-              ? `It reached <strong style="color:${COLORS.drop};">${escapeHtml(money(input.currentPrice))}</strong>, at or below your ${escapeHtml(money(input.targetPrice))} target.`
-              : `It dropped to <strong style="color:${COLORS.drop};">${escapeHtml(money(input.currentPrice))}</strong>.`
+            destination != null
+              ? `Delivered to ${escapeHtml(destination.countryName)} it now costs <strong style="color:${COLORS.drop};">${escapeHtml(money(destination.deliveredPrice))}</strong>, at or below your ${escapeHtml(money(destination.targetDeliveredPrice))} target.`
+              : input.targetPrice != null
+                ? `It reached <strong style="color:${COLORS.drop};">${escapeHtml(money(input.currentPrice))}</strong>, at or below your ${escapeHtml(money(input.targetPrice))} target.`
+                : `It dropped to <strong style="color:${COLORS.drop};">${escapeHtml(money(input.currentPrice))}</strong>.`
           }
           ${dropAmount != null ? `That is ${escapeHtml(money(dropAmount))} less than when we last checked.` : ''}
         </p>
@@ -179,9 +219,11 @@ export function renderPriceAlertEmail(input: PriceAlertEmailInput): RenderedEmai
     '',
     input.productName,
     '',
-    input.targetPrice != null
-      ? `Now ${money(input.currentPrice)} — at or below your target of ${money(input.targetPrice)}.`
-      : `Now ${money(input.currentPrice)}.`,
+    destination != null
+      ? `Delivered to ${destination.countryName}: ${money(destination.deliveredPrice)} — at or below your target of ${money(destination.targetDeliveredPrice)}.`
+      : input.targetPrice != null
+        ? `Now ${money(input.currentPrice)} — at or below your target of ${money(input.targetPrice)}.`
+        : `Now ${money(input.currentPrice)}.`,
     dropAmount != null ? `Down ${money(dropAmount)} since the last check.` : '',
     '',
     ...rows.map(([label, value]) => `${label}: ${value}`),

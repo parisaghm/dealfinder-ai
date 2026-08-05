@@ -7,7 +7,7 @@ import {
   isoDateTimeSchema,
   moneySchema,
 } from './common';
-import { productSummarySchema, storeSummarySchema } from './product';
+import { priceHistoryQuerySchema, productSummarySchema, storeSummarySchema } from './product';
 
 /**
  * Destination-aware offer payloads.
@@ -87,8 +87,17 @@ export const deliveryToDestinationSchema = z.object({
   /** Always sent, so no surface has to look a name up or show a bare code. */
   destinationCountryName: z.string().min(1),
 
-  sourceCountry: countryCodeSchema,
-  sourceCountryName: z.string().min(1),
+  /**
+   * Where the store trades from, when it declares one.
+   *
+   * Nullable because `Store.countryCode` is: it was added after three Finnish
+   * stores already existed, and a store integrated from a feed that does not
+   * publish a trading country is a real case. Guessing — treating an undeclared
+   * store as domestic — would silently claim "no import charges" on a route we
+   * cannot see, so an unknown source stays unknown and the UI says so.
+   */
+  sourceCountry: countryCodeSchema.nullable(),
+  sourceCountryName: z.string().nullable(),
 
   /** Authoritative. False means we have no offer proving delivery is possible. */
   shipsToDestination: z.boolean(),
@@ -121,8 +130,14 @@ export const deliveryToDestinationSchema = z.object({
   lastCheckedAt: isoDateTimeSchema,
 
   /**
-   * True when this offer must not be crowned cheapest — a stale or missing
-   * exchange rate, or an incomplete cost breakdown. Distinct from being hidden.
+   * True when a stale or missing exchange rate bars this offer from being
+   * crowned cheapest. Barred, not hidden — the offer is still shown, labelled
+   * with the age of its rate.
+   *
+   * Scoped to the exchange rate alone. An unknown delivered total and a store
+   * that does not ship here are also disqualifying, but they are counted and
+   * explained separately, so folding them in would make
+   * `offersBlockedByExchangeRate` count offers whose rate is perfectly fine.
    */
   blocksCheapestClaim: z.boolean(),
 });
@@ -325,3 +340,62 @@ export const productOffersResponseSchema = z.object({
   comparison: deliveredComparisonSchema,
 });
 export type ProductOffersResponse = z.infer<typeof productOffersResponseSchema>;
+
+// ── Destination-aware price history ─────────────────────────────────────────
+
+/**
+ * `GET /api/products/:id/history?days=90&country=FI&currency=EUR`
+ *
+ * `country` is the switch, exactly as it is on `/api/deals`: absent means the
+ * existing `PriceHistory` series and the existing response shape, so a client on
+ * the previous contract is unaffected.
+ */
+export const destinationHistoryQuerySchema = priceHistoryQuerySchema.extend({
+  country: countryCodeSchema.optional(),
+  currency: currencySchema.optional(),
+});
+export type DestinationHistoryQuery = z.infer<typeof destinationHistoryQuerySchema>;
+
+/**
+ * One recorded observation of what this offer cost, for this destination.
+ *
+ * Amounts are in the currency the store quoted at the time, never converted at
+ * read time. Re-converting a historical point with today's rate would make a
+ * currency movement indistinguishable from a price change — which is the exact
+ * confusion `StoreOfferPriceHistory` records both currencies to prevent. The rate
+ * that was actually used for comparison is carried alongside, so the client can
+ * re-explain the point rather than re-derive it.
+ */
+export const deliveredHistoryPointSchema = z.object({
+  recordedAt: isoDateTimeSchema,
+  productPrice: moneyAmountSchema,
+  /** Null means the store published no delivery cost on that date. */
+  shippingPrice: moneyAmountSchema.nullable(),
+  totalDeliveredPrice: moneyAmountSchema.nullable(),
+  availability: availabilitySchema,
+  /** The rate in force when this observation was compared. Null if none was used. */
+  exchangeRate: z.number().positive().nullable(),
+  exchangeRateTimestamp: isoDateTimeSchema.nullable(),
+});
+export type DeliveredHistoryPoint = z.infer<typeof deliveredHistoryPointSchema>;
+
+export const deliveredHistoryResponseSchema = z.object({
+  productId: idSchema,
+  destinationCountry: countryCodeSchema,
+  destinationCountryName: z.string().min(1),
+  /** The offer whose series this is, or null when none reaches the destination. */
+  storeOfferId: idSchema.nullable(),
+  /** The currency the points are expressed in — the store's own. */
+  currency: currencySchema.nullable(),
+  /**
+   * False when no offer proves this product can be delivered to this country.
+   *
+   * Reported explicitly and paired with an empty series rather than falling back
+   * to `PriceHistory`: the product's list-price history says nothing about what
+   * delivery to this destination has cost, and presenting it as if it did would
+   * be inventing data.
+   */
+  hasDestinationOffer: z.boolean(),
+  points: z.array(deliveredHistoryPointSchema),
+});
+export type DeliveredHistoryResponse = z.infer<typeof deliveredHistoryResponseSchema>;

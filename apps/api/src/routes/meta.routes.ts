@@ -19,7 +19,21 @@ export function createMetaRouter(prisma: PrismaClient): Router {
     try {
       const stores = await prisma.store.findMany({
         where: { isActive: true },
-        select: { id: true, slug: true, name: true, websiteUrl: true, logoUrl: true, isActive: true },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          websiteUrl: true,
+          logoUrl: true,
+          isActive: true,
+          // Widened for the store filter, which now has to be able to say where a
+          // store trades from and to mark the fictional demo retailers as such.
+          // `isDemoStore` is surfaced wherever a store is, so a synthetic
+          // catalogue is never presented as a real one.
+          countryCode: true,
+          region: true,
+          isDemoStore: true,
+        },
         orderBy: { name: 'asc' },
       });
 

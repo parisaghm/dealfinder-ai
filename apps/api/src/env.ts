@@ -104,6 +104,21 @@ const envSchema = z
     /** Let an AI endorsement stand in for a human approval. Off. */
     MATCH_AI_AUTO_APPROVE: booleanEnv(false),
 
+    /**
+     * How old a recorded exchange rate may be before a converted total stops
+     * being trusted.
+     *
+     * A rate older than this is still *shown*, labelled with its age, because
+     * hiding a genuinely relevant cross-border offer is its own kind of
+     * dishonesty. What it may not do is win a cheapest-delivered comparison or
+     * trigger a delivered-price alert — an email that says "this is now under
+     * your target" must not rest on a rate from last week.
+     *
+     * 48 hours by default: long enough that the seeded demo rates work offline
+     * for a couple of days, short enough that a stalled FX job becomes visible.
+     */
+    FX_RATE_MAX_AGE_HOURS: intEnv(48, 1, 24 * 365),
+
     MONITOR_ENABLED: booleanEnv(true),
     MONITOR_CRON: z.string().default('*/30 * * * *'),
     MONITOR_BATCH_SIZE: intEnv(25, 1, 1000),

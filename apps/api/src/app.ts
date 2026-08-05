@@ -9,6 +9,7 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { requestContext } from './middleware/request-context';
 import { createAlertsRouter } from './routes/alerts.routes';
 import { createCanonicalProductsRouter } from './routes/canonical-products.routes';
+import { createCountriesRouter } from './routes/countries.routes';
 import { createDashboardRouter } from './routes/dashboard.routes';
 import { createDealsRouter } from './routes/deals.routes';
 import { createHealthRouter } from './routes/health.routes';
@@ -17,6 +18,7 @@ import { createMetaRouter } from './routes/meta.routes';
 import { createProductsRouter } from './routes/products.routes';
 import { createSavedSearchesRouter } from './routes/saved-searches.routes';
 import { createSettingsRouter } from './routes/settings.routes';
+import { createStoresRouter } from './routes/stores.routes';
 import { createWatchlistRouter } from './routes/watchlist.routes';
 
 /**
@@ -88,6 +90,8 @@ export function createApp(prisma: PrismaClient): Express {
 
   app.use('/api/health', createHealthRouter(prisma));
   app.use('/api/meta', createMetaRouter(prisma));
+  app.use('/api/countries', createCountriesRouter());
+  app.use('/api/stores', createStoresRouter(prisma));
   app.use('/api/deals', createDealsRouter(prisma));
   app.use('/api/products', createProductsRouter(prisma));
   app.use('/api/canonical-products', createCanonicalProductsRouter(prisma));
