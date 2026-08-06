@@ -35,5 +35,7 @@ npm-debug.log*
 .vscode/*
 !.vscode/extensions.json
 .idea/
+# Local Claude Code settings — machine-specific permissions, not shared config
+.claude/
 .DS_Store
 Thumbs.db
