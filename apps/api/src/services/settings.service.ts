@@ -2,7 +2,10 @@ import type { PrismaClient } from '@deal-finder/db';
 import type {
   ClearDataInput,
   ClearDataResponse,
+  CountryCode,
   Currency,
+  DeliveryTimePreference,
+  StoreRegion,
   UpdateUserSettingsInput,
   UserSettings,
 } from '@deal-finder/shared';
@@ -39,6 +42,18 @@ export async function getUserSettings(
     preferredStores: settings.preferredStores,
     preferredCategories: settings.preferredCategories,
     currency: settings.currency as Currency,
+
+    // Narrowed at this boundary: the columns are plain text so a new country or
+    // region needs no migration, and the shared enums are the authority on what
+    // those strings may be.
+    defaultCountryCode: settings.defaultCountryCode as CountryCode,
+    defaultStoreRegion: settings.defaultStoreRegion as StoreRegion,
+    preferredStoreCountries: settings.preferredStoreCountries as CountryCode[],
+    includeNonEuStores: settings.includeNonEuStores,
+    showUnknownShipping: settings.showUnknownShipping,
+    warnAboutImportCharges: settings.warnAboutImportCharges,
+    deliveryTimePreference: settings.deliveryTimePreference as DeliveryTimePreference,
+
     updatedAt: settings.updatedAt.toISOString(),
   };
 }
@@ -75,6 +90,28 @@ export async function updateUserSettings(
         ? { preferredCategories: input.preferredCategories }
         : {}),
       ...(input.currency !== undefined ? { currency: input.currency } : {}),
+
+      ...(input.defaultCountryCode !== undefined
+        ? { defaultCountryCode: input.defaultCountryCode }
+        : {}),
+      ...(input.defaultStoreRegion !== undefined
+        ? { defaultStoreRegion: input.defaultStoreRegion }
+        : {}),
+      ...(input.preferredStoreCountries !== undefined
+        ? { preferredStoreCountries: input.preferredStoreCountries }
+        : {}),
+      ...(input.includeNonEuStores !== undefined
+        ? { includeNonEuStores: input.includeNonEuStores }
+        : {}),
+      ...(input.showUnknownShipping !== undefined
+        ? { showUnknownShipping: input.showUnknownShipping }
+        : {}),
+      ...(input.warnAboutImportCharges !== undefined
+        ? { warnAboutImportCharges: input.warnAboutImportCharges }
+        : {}),
+      ...(input.deliveryTimePreference !== undefined
+        ? { deliveryTimePreference: input.deliveryTimePreference }
+        : {}),
     };
 
     if (Object.keys(preferences).length > 0) {

@@ -25,17 +25,31 @@ afterEach(() => {
  * mobile card list, so *both* branches get real coverage rather than one being
  * permanently invisible.
  */
-let viewportMatches = true;
+type ViewportResolver = (query: string) => boolean;
+
+let resolveViewport: ViewportResolver = () => true;
 
 export function setViewportMatches(matches: boolean): void {
-  viewportMatches = matches;
+  resolveViewport = () => matches;
+}
+
+/**
+ * Per-query control, for a component that switches on more than one breakpoint.
+ *
+ * The delivered comparison table has three layouts and reads two queries, so a
+ * single boolean can only reach two of them — its middle tier (`sm` matched, `lg`
+ * not) would otherwise be permanently untested. Reset to the wide default by the
+ * same `afterEach` as `setViewportMatches`.
+ */
+export function setViewportBreakpoints(resolver: ViewportResolver): void {
+  resolveViewport = resolver;
 }
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   configurable: true,
   value: vi.fn((query: string) => ({
-    matches: viewportMatches,
+    matches: resolveViewport(query),
     media: query,
     onchange: null,
     addEventListener: vi.fn(),

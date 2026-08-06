@@ -125,6 +125,15 @@ model UserSettings {
   preferredStores     String[] @default([])
   preferredCategories String[] @default([])
 
+  /// Country codes whose stores the user wants to see, within whatever the
+  /// region setting already admits.
+  ///
+  /// Distinct from `preferredStores`, which holds store *slugs*: a shopper who
+  /// wants "German and Dutch shops, whichever they turn out to be" cannot express
+  /// that as a list of slugs, and would have to revisit it every time a store is
+  /// integrated. Empty means no narrowing, which is why it is not nullable.
+  preferredStoreCountries String[] @default([])
+
   currency  String   @default("EUR")
 
   /// Destination and presentation defaults.

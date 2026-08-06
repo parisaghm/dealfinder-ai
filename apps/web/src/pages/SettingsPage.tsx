@@ -1,4 +1,16 @@
-import { CHECK_FREQUENCIES, CURRENCIES, type CheckFrequency } from '@deal-finder/shared';
+import {
+  CHECK_FREQUENCIES,
+  COUNTRIES,
+  CURRENCIES,
+  DELIVERY_TIME_PREFERENCES,
+  STORE_REGIONS,
+  countryName,
+  type CheckFrequency,
+  type CountryCode,
+  type Currency,
+  type DeliveryTimePreference,
+  type StoreRegion,
+} from '@deal-finder/shared';
 import {
   Badge,
   Button,
@@ -6,18 +18,21 @@ import {
   Checkbox,
   ErrorState,
   Field,
+  SegmentedControl,
   Input,
   SectionHeading,
   Select,
   Skeleton,
 } from '@deal-finder/ui';
 import { AlertTriangle, Mail, Save } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   useClearData,
+  useCountries,
   useMeta,
   useSendTestAlert,
   useSettings,
+  useStores,
   useUpdateSettings,
 } from '../lib/queries';
 
@@ -39,9 +54,24 @@ const FREQUENCY_LABEL: Record<CheckFrequency, string> = {
   WEEKLY: 'Once a week',
 };
 
+const REGION_LABEL: Record<StoreRegion, string> = {
+  local: 'Local',
+  nordic: 'Nordic',
+  european: 'European',
+};
+
+const DELIVERY_TIME_LABEL: Record<DeliveryTimePreference, string> = {
+  any: 'Any delivery time',
+  'under-3-days': 'Within 3 business days',
+  'under-7-days': 'Within 7 business days',
+  'under-14-days': 'Within 14 business days',
+};
+
 export function SettingsPage() {
   const settings = useSettings();
   const { data: meta } = useMeta();
+  const countries = useCountries();
+  const storeList = useStores(null, null);
   const updateSettings = useUpdateSettings();
   const sendTestAlert = useSendTestAlert();
   const clearData = useClearData();
@@ -55,9 +85,18 @@ export function SettingsPage() {
     checkFrequency: 'EVERY_6_HOURS' as CheckFrequency,
     preferredStores: [] as string[],
     preferredCategories: [] as string[],
-    currency: 'EUR',
+    currency: 'EUR' as Currency,
+
+    defaultCountryCode: 'FI' as CountryCode,
+    defaultStoreRegion: 'local' as StoreRegion,
+    preferredStoreCountries: [] as CountryCode[],
+    includeNonEuStores: false,
+    showUnknownShipping: false,
+    warnAboutImportCharges: true,
+    deliveryTimePreference: 'any' as DeliveryTimePreference,
   });
   const [saved, setSaved] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState('');
 
   // Populate the form once settings arrive.
@@ -73,8 +112,48 @@ export function SettingsPage() {
       preferredStores: settings.data.preferredStores,
       preferredCategories: settings.data.preferredCategories,
       currency: settings.data.currency,
+
+      defaultCountryCode: settings.data.defaultCountryCode,
+      defaultStoreRegion: settings.data.defaultStoreRegion,
+      preferredStoreCountries: [...settings.data.preferredStoreCountries],
+      includeNonEuStores: settings.data.includeNonEuStores,
+      showUnknownShipping: settings.data.showUnknownShipping,
+      warnAboutImportCharges: settings.data.warnAboutImportCharges,
+      deliveryTimePreference: settings.data.deliveryTimePreference,
     });
   }, [settings.data]);
+
+  /**
+   * Selectable delivery destinations.
+   *
+   * The static table is the fallback so the controls work before the request
+   * resolves; unsupported countries are listed and disabled rather than hidden,
+   * because "not available yet" and "we forgot" are otherwise indistinguishable.
+   */
+  const countryOptions = useMemo(() => {
+    const fromApi = countries.data?.items;
+    if (fromApi && fromApi.length > 0) return fromApi;
+    return COUNTRIES.map((entry) => ({
+      code: entry.code as CountryCode,
+      name: entry.name,
+      isSupported: entry.isSupported,
+    }));
+  }, [countries.data]);
+
+  /**
+   * Countries we actually have stores in.
+   *
+   * Derived from the store list rather than from the country table: offering
+   * "prefer stores in Portugal" when no Portuguese store exists is a setting that
+   * silently does nothing, which is worse than not offering it.
+   */
+  const storeCountryOptions = useMemo(() => {
+    const codes = new Set<CountryCode>();
+    for (const store of storeList.data?.items ?? []) {
+      if (store.countryCode) codes.add(store.countryCode);
+    }
+    return [...codes].sort((a, b) => countryName(a).localeCompare(countryName(b)));
+  }, [storeList.data]);
 
   if (settings.isPending) {
     return (
@@ -112,6 +191,16 @@ export function SettingsPage() {
 
   const save = () => {
     setSaved(false);
+    setEmailError(null);
+
+    // Checked here as well as on the server so the user gets a specific message
+    // against the field rather than a round trip and a generic 400. The server
+    // stays the authority.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setEmailError('Enter a valid email address, for example you@example.com.');
+      return;
+    }
+
     updateSettings.mutate(
       {
         email: form.email,
@@ -122,7 +211,18 @@ export function SettingsPage() {
         checkFrequency: form.checkFrequency,
         preferredStores: form.preferredStores,
         preferredCategories: form.preferredCategories,
-        currency: form.currency as (typeof CURRENCIES)[number],
+        currency: form.currency,
+
+        // Sent alongside rather than instead of: a PATCH that omitted the
+        // notification fields would be a different request, and the point of
+        // sending the whole form is that nothing the user can see gets left behind.
+        defaultCountryCode: form.defaultCountryCode,
+        defaultStoreRegion: form.defaultStoreRegion,
+        preferredStoreCountries: form.preferredStoreCountries,
+        includeNonEuStores: form.includeNonEuStores,
+        showUnknownShipping: form.showUnknownShipping,
+        warnAboutImportCharges: form.warnAboutImportCharges,
+        deliveryTimePreference: form.deliveryTimePreference,
       },
       { onSuccess: () => setSaved(true) },
     );
@@ -144,14 +244,17 @@ export function SettingsPage() {
           description="This MVP uses a single development user; no password is required."
         />
 
-        <Field label="Email address" description="Price alerts are sent here.">
+        <Field label="Email address" description="Price alerts are sent here." error={emailError}>
           {(fieldProps) => (
             <Input
               {...fieldProps}
               name="email"
               type="email"
               value={form.email}
-              onChange={(event) => setForm({ ...form, email: event.target.value })}
+              onChange={(event) => {
+                setForm({ ...form, email: event.target.value });
+                setEmailError(null);
+              }}
               autoComplete="email"
             />
           )}
@@ -288,22 +391,163 @@ export function SettingsPage() {
           </div>
         </fieldset>
 
-        <Field label="Currency" description="Only EUR is populated in this MVP.">
+      </Card>
+
+      {/* ── Delivery and currency ────────────────────────────────────────── */}
+      <Card className="flex flex-col gap-5">
+        <SectionHeading
+          title="Delivery and currency"
+          description="Where you want things delivered, and how prices are quoted. These seed the destination controls in the header; they do not switch destination comparison on by themselves."
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Default delivery country"
+            description="Used to pre-fill the “Deliver to” control."
+          >
+            {(fieldProps) => (
+              <Select
+                {...fieldProps}
+                name="defaultCountryCode"
+                value={form.defaultCountryCode}
+                onChange={(event) =>
+                  setForm({ ...form, defaultCountryCode: event.target.value as CountryCode })
+                }
+              >
+                {/* Country names, never a flag alone: several are
+                    indistinguishable at this size and screen readers announce
+                    them as unhelpful emoji names. */}
+                {countryOptions
+                  .filter((option) => option.isSupported)
+                  .map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {option.name}
+                    </option>
+                  ))}
+                {countryOptions.some((option) => !option.isSupported) && (
+                  <optgroup label="Not available yet">
+                    {countryOptions
+                      .filter((option) => !option.isSupported)
+                      .map((option) => (
+                        <option key={option.code} value={option.code} disabled>
+                          {option.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                )}
+              </Select>
+            )}
+          </Field>
+
+          <Field
+            label="Preferred currency"
+            description="Prices from other currencies are converted and labelled as estimates."
+          >
+            {(fieldProps) => (
+              <Select
+                {...fieldProps}
+                name="currency"
+                value={form.currency}
+                onChange={(event) =>
+                  setForm({ ...form, currency: event.target.value as Currency })
+                }
+              >
+                {CURRENCIES.map((currency) => (
+                  <option key={currency} value={currency}>
+                    {currency}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        </div>
+
+        <SegmentedControl
+          legend="Default store region"
+          name="defaultStoreRegion"
+          value={form.defaultStoreRegion}
+          options={STORE_REGIONS.map((region) => ({ value: region, label: REGION_LABEL[region] }))}
+          onChange={(next) => setForm({ ...form, defaultStoreRegion: next })}
+        />
+
+        <fieldset className="flex flex-col gap-2.5">
+          <legend className="mb-1 text-sm font-medium text-ink-700">
+            Preferred store countries
+          </legend>
+          <p className="text-xs text-ink-500">
+            Narrows results to stores based in these countries, within whatever the region above
+            allows. Leave all unchecked to include every store the region admits.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {storeCountryOptions.length === 0 ? (
+              <p className="text-xs text-ink-500">Store countries load with the store list.</p>
+            ) : (
+              storeCountryOptions.map((code) => (
+                <Checkbox
+                  key={code}
+                  label={countryName(code)}
+                  checked={form.preferredStoreCountries.includes(code)}
+                  onChange={() =>
+                    setForm((current) => ({
+                      ...current,
+                      preferredStoreCountries: current.preferredStoreCountries.includes(code)
+                        ? current.preferredStoreCountries.filter((entry) => entry !== code)
+                        : [...current.preferredStoreCountries, code],
+                    }))
+                  }
+                />
+              ))
+            )}
+          </div>
+        </fieldset>
+
+        <Field
+          label="Delivery-time preference"
+          description="Offers slower than this are filtered out when a destination is selected."
+        >
           {(fieldProps) => (
             <Select
               {...fieldProps}
-              name="currency"
-              value={form.currency}
-              onChange={(event) => setForm({ ...form, currency: event.target.value })}
+              name="deliveryTimePreference"
+              value={form.deliveryTimePreference}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  deliveryTimePreference: event.target.value as DeliveryTimePreference,
+                })
+              }
             >
-              {CURRENCIES.map((currency) => (
-                <option key={currency} value={currency}>
-                  {currency}
+              {DELIVERY_TIME_PREFERENCES.map((preference) => (
+                <option key={preference} value={preference}>
+                  {DELIVERY_TIME_LABEL[preference]}
                 </option>
               ))}
             </Select>
           )}
         </Field>
+
+        <div className="flex flex-col gap-3">
+          <Checkbox
+            label="Include stores outside the EU"
+            description="Import duty and customs handling may apply on these routes, and we never claim to have calculated them."
+            checked={form.includeNonEuStores}
+            onChange={(event) => setForm({ ...form, includeNonEuStores: event.target.checked })}
+          />
+          <Checkbox
+            label="Show offers with unknown shipping cost"
+            description="They are shown with no delivered total, never as free delivery, and they cannot win the cheapest-delivered comparison."
+            checked={form.showUnknownShipping}
+            onChange={(event) => setForm({ ...form, showUnknownShipping: event.target.checked })}
+          />
+          <Checkbox
+            label="Warn me about possible import charges"
+            description="Shown on any route that could attract duty. Turning this off hides the warning, not the risk."
+            checked={form.warnAboutImportCharges}
+            onChange={(event) =>
+              setForm({ ...form, warnAboutImportCharges: event.target.checked })
+            }
+          />
+        </div>
       </Card>
 
       {/* ── Save ─────────────────────────────────────────────────────────── */}

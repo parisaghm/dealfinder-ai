@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 import { cn } from './utils/cn';
 
 /**
@@ -10,7 +10,12 @@ import { cn } from './utils/cn';
  */
 export type BadgeTone = 'neutral' | 'accent' | 'drop' | 'rise' | 'warn' | 'muted';
 
-export interface BadgeProps {
+/**
+ * Extends the span's own attributes, matching `Card`, so a caller can attach a
+ * `data-testid` or an `aria-*` hook without this component having to enumerate
+ * one prop per use site.
+ */
+export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone;
   children: ReactNode;
   className?: string;
@@ -28,7 +33,14 @@ const TONES: Record<BadgeTone, string> = {
   muted: 'bg-transparent text-ink-500 border-line',
 };
 
-export function Badge({ tone = 'neutral', size = 'sm', icon, className, children }: BadgeProps) {
+export function Badge({
+  tone = 'neutral',
+  size = 'sm',
+  icon,
+  className,
+  children,
+  ...rest
+}: BadgeProps) {
   return (
     <span
       className={cn(
@@ -37,6 +49,7 @@ export function Badge({ tone = 'neutral', size = 'sm', icon, className, children
         TONES[tone],
         className,
       )}
+      {...rest}
     >
       {icon}
       {children}

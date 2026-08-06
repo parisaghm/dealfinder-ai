@@ -21,9 +21,12 @@ import { ProductCard } from '../components/deals/ProductCard';
 import { DealQualityExplainer } from '../components/product/DealQualityExplainer';
 import { PriceHistoryChart } from '../components/product/PriceHistoryChart';
 import { TargetPriceForm } from '../components/product/TargetPriceForm';
+import { DestinationSummary } from '../components/layout/DestinationControls';
+import { useActiveDestination } from '../lib/destination';
 import {
   useAddToWatchlist,
   useProduct,
+  useProductOffers,
   useRemoveWatchlistItem,
   useUpdateWatchlistItem,
   useWatchlist,
@@ -47,8 +50,28 @@ export function ProductDetailsPage() {
 
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // The watchlist row for this product, if any — carries the existing target.
-  const watchlistItem = watchlist.data?.items.find((item) => item.productId === id);
+  const destination = useActiveDestination();
+  // Only for the delivered total this destination's target is measured against;
+  // disabled entirely without a destination, so the legacy page fetches what it
+  // always fetched.
+  const destinationOffers = useProductOffers(destination ? id : undefined, destination);
+
+  /**
+   * The watchlist row for this product.
+   *
+   * Tracking identity includes destination and currency, so with a destination
+   * selected the row for *that* destination is the one this form edits. Falling
+   * back to any row would let a Finnish target be silently overwritten while the
+   * user was looking at Germany.
+   */
+  const watchlistItem = destination
+    ? (watchlist.data?.items.find(
+        (item) =>
+          item.productId === id &&
+          item.destinationCountry === destination.country &&
+          item.preferredCurrency === destination.currency,
+      ) ?? null)
+    : (watchlist.data?.items.find((item) => item.productId === id) ?? null);
 
   if (product.isPending) return <ProductSkeleton />;
 
@@ -73,10 +96,50 @@ export function ProductDetailsPage() {
   const discountLabel = formatDiscount(data.discountPercent);
   const stats = data.priceStatistics;
 
+  /**
+   * This listing's own delivered total for the selected destination.
+   *
+   * Matched on `productId` rather than taken from the head of the list: the
+   * offers endpoint answers for the whole canonical group, and the cheapest of
+   * those may well belong to a different shop than the one being viewed.
+   */
+  const deliveredPrice = destination
+    ? (destinationOffers.data?.offers.find((offer) => offer.productId === data.id)?.delivery
+        .totalDeliveredPrice?.major ?? null)
+    : null;
+
+  /**
+   * Where the typed number lands.
+   *
+   * With a destination it is a delivered target; without one it is the list-price
+   * target the form has always set. Deciding it here rather than inside the form
+   * keeps the form's contract — and its existing tests — unchanged.
+   */
   const handleTarget = (targetPrice: number | null) => {
     setActionError(null);
     const onError = (error: unknown) =>
       setActionError(error instanceof Error ? error.message : 'Something went wrong.');
+
+    if (destination) {
+      if (watchlistItem) {
+        updateItem.mutate(
+          { id: watchlistItem.id, input: { targetDeliveredPrice: targetPrice } },
+          { onError },
+        );
+      } else {
+        addToWatchlist.mutate(
+          {
+            productId: data.id,
+            targetDeliveredPrice: targetPrice,
+            destinationCountry: destination.country,
+            preferredCurrency: destination.currency,
+            alertsEnabled: true,
+          },
+          { onError },
+        );
+      }
+      return;
+    }
 
     if (watchlistItem) {
       updateItem.mutate({ id: watchlistItem.id, input: { targetPrice } }, { onError });
@@ -264,16 +327,40 @@ export function ProductDetailsPage() {
               </div>
             )}
 
+            {destination && (
+              <DestinationSummary
+                country={destination.country}
+                currency={destination.currency}
+                className="text-xs"
+              />
+            )}
+
             <TargetPriceForm
               currency={data.currency}
               currentPrice={data.currentPrice}
               lowestPrice={stats.lowest}
               averagePrice={stats.average}
-              initialTarget={watchlistItem?.targetPrice ?? null}
+              // The delivered target when a destination is active, because that is
+              // what the field then edits — showing the list-price target there
+              // would pre-fill the wrong number into the wrong threshold.
+              initialTarget={
+                destination
+                  ? (watchlistItem?.targetDeliveredPrice ?? null)
+                  : (watchlistItem?.targetPrice ?? null)
+              }
               isTracked={Boolean(watchlistItem)}
               pending={addToWatchlist.isPending || updateItem.isPending}
               onSubmit={handleTarget}
               error={actionError}
+              destination={
+                destination
+                  ? {
+                      country: destination.country,
+                      currency: destination.currency,
+                      deliveredPrice,
+                    }
+                  : null
+              }
             />
 
             {watchlistItem && (

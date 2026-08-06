@@ -1,9 +1,12 @@
 import type {
   CanonicalProductsQuery,
   ClearDataInput,
+  CountryCode,
   CreateSavedSearchInput,
   CreateWatchlistItemPayload,
+  Currency,
   DealsQuery,
+  StoreRegion,
   MatchCandidatesQuery,
   MatchDecisionBody,
   OfferSort,
@@ -14,6 +17,7 @@ import type {
 } from '@deal-finder/shared';
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type UseQueryOptions,
@@ -38,6 +42,26 @@ export const queryKeys = {
   savedSearches: ['saved-searches'] as const,
   dashboard: ['dashboard'] as const,
   settings: ['settings'] as const,
+
+  /**
+   * Destination-sensitive keys.
+   *
+   * Country, currency and region are part of the key rather than merely part of
+   * the request, because they change the *answer*: the same product id in Finland
+   * and in Germany has a different delivered total, a different set of stores and
+   * a different winner. Sharing one cache entry between them would serve German
+   * shipping to a Finnish shopper.
+   *
+   * `deals` needs nothing extra — its key already carries the whole query object,
+   * destination fields included.
+   */
+  countries: ['countries'] as const,
+  stores: (country: CountryCode | null, region: StoreRegion | null) =>
+    ['stores', country, region] as const,
+  productOffers: (id: string, country: CountryCode, currency: Currency) =>
+    ['product-offers', id, country, currency] as const,
+  destinationHistory: (id: string, country: CountryCode, currency: Currency, days: number) =>
+    ['product', id, 'destination-history', country, currency, days] as const,
 
   canonicalProducts: (query: Partial<CanonicalProductsQuery>) =>
     ['canonical-products', query] as const,
@@ -103,6 +127,114 @@ export function usePriceHistory(id: string | undefined, days: number) {
   });
 }
 
+/**
+ * The country list. Static on the server, so it is cached for the session.
+ */
+export function useCountries() {
+  return useQuery({
+    queryKey: queryKeys.countries,
+    queryFn: ({ signal }) => api.countries(signal),
+    staleTime: 60 * 60_000,
+    retry: retryPolicy,
+  });
+}
+
+/**
+ * Stores, optionally only those that can reach a country.
+ *
+ * `enabled` is not gated on the country: with none, this is the plain store list
+ * the filter panel has always needed.
+ */
+export function useStores(country: CountryCode | null, region: StoreRegion | null) {
+  return useQuery({
+    queryKey: queryKeys.stores(country, region),
+    queryFn: ({ signal }) =>
+      api.stores({ ...(country ? { country } : {}), ...(region ? { region } : {}) }, signal),
+    staleTime: 10 * 60_000,
+    retry: retryPolicy,
+  });
+}
+
+/**
+ * Every store's offer for one product, as it bears on one destination.
+ *
+ * Disabled until a destination is known, so a page that has not resolved one
+ * yet issues no request rather than guessing at Finland.
+ */
+export function useProductOffers(
+  id: string | undefined,
+  destination: { country: CountryCode; currency: Currency } | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.productOffers(id ?? '', destination?.country ?? 'FI', destination?.currency ?? 'EUR'),
+    queryFn: ({ signal }) => api.productOffers(id!, destination!, signal),
+    ...defaultQueryOptions,
+    // Keeps the current comparison on screen while a new destination loads, so
+    // switching country never flashes an empty table. The heading names the
+    // destination the data is *for*, so a stale row can never read as current.
+    placeholderData: (previous) => previous,
+    enabled: Boolean(id) && destination != null,
+  });
+}
+
+/**
+ * The destination-specific delivered-price series.
+ *
+ * Fetched once for the whole window and filtered per store in the component, for
+ * the same reason `useCanonicalHistory` is: toggling a store becomes instant and
+ * there is no in-flight request for a test to race.
+ */
+export function useDestinationHistory(
+  id: string | undefined,
+  destination: { country: CountryCode; currency: Currency } | null,
+  days: number,
+) {
+  return useQuery({
+    queryKey: queryKeys.destinationHistory(
+      id ?? '',
+      destination?.country ?? 'FI',
+      destination?.currency ?? 'EUR',
+      days,
+    ),
+    queryFn: ({ signal }) => api.destinationHistory(id!, { ...destination!, days }, signal),
+    ...defaultQueryOptions,
+    enabled: Boolean(id) && destination != null,
+  });
+}
+
+/**
+ * One delivered-price series per store, for a whole canonical group.
+ *
+ * `GET /api/products/:id/history?country=` answers for a single listing, because
+ * a listing has exactly one offer per destination — so a chart with one line per
+ * store needs one request per store. `useQueries` is what makes that legal: the
+ * number of listings is data, and a plain `useQuery` per listing would change the
+ * hook count between renders.
+ *
+ * Each result is cached under the same key `useDestinationHistory` uses, so a
+ * listing already fetched on its own detail page costs nothing here.
+ */
+export function useDestinationHistories(
+  productIds: readonly string[],
+  destination: { country: CountryCode; currency: Currency } | null,
+  days: number,
+) {
+  return useQueries({
+    queries: productIds.map((id) => ({
+      queryKey: queryKeys.destinationHistory(
+        id,
+        destination?.country ?? 'FI',
+        destination?.currency ?? 'EUR',
+        days,
+      ),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        api.destinationHistory(id, { ...destination!, days }, signal),
+      ...defaultQueryOptions,
+      enabled: destination != null,
+    })),
+  });
+}
+
 export function useWatchlist() {
   return useQuery({
     queryKey: queryKeys.watchlist,
@@ -150,6 +282,9 @@ function useTrackingInvalidation() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     void queryClient.invalidateQueries({ queryKey: ['deals'] });
     void queryClient.invalidateQueries({ queryKey: ['product'] });
+    // Destination offers also carry a tracked flag through their product, and a
+    // prefix match on 'product' does not reach the separate offers cache.
+    void queryClient.invalidateQueries({ queryKey: ['product-offers'] });
   };
 }
 

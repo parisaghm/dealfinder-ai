@@ -88,7 +88,14 @@ export function DashboardPage() {
 
       {/* ── Recent changes + alert activity ──────────────────────────────── */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <section className="flex flex-col gap-4">
+        {/*
+          `min-w-0` on the grid children, because a grid item's default
+          `min-width: auto` lets its content widen the track. Without it the long
+          product names in these rows push the column past the viewport and the
+          whole page scrolls sideways at 320px — the `truncate` on the name cannot
+          help, since the track has already grown to fit it.
+        */}
+        <section className="flex min-w-0 flex-col gap-4">
           <SectionHeading
             title="Recent price changes"
             description="Movements among the products you track."
@@ -112,7 +119,7 @@ export function DashboardPage() {
           )}
         </section>
 
-        <section className="flex flex-col gap-4">
+        <section className="flex min-w-0 flex-col gap-4">
           <SectionHeading
             title="Alert activity"
             description="Emails we have sent you about tracked products."

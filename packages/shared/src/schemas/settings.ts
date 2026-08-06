@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { countryCodeSchema, storeRegionSchema } from '../countries';
 import { currencySchema, emailSchema, isoDateTimeSchema } from './common';
+import { deliveryTimePreferenceSchema } from './destination';
 
 /**
  * User settings.
@@ -36,7 +38,32 @@ export const userSettingsSchema = z.object({
   /** Store slugs pre-selected in the search filters. */
   preferredStores: z.array(z.string().max(64)),
   preferredCategories: z.array(z.string().max(64)),
+  /**
+   * The currency the user prefers to be quoted in.
+   *
+   * The existing field, reused rather than joined by a second
+   * `preferredCurrency`: two columns meaning "which currency" would inevitably
+   * disagree, and this one already carried the answer.
+   */
   currency: currencySchema,
+
+  /**
+   * Delivery and presentation defaults.
+   *
+   * These seed the destination controls; they do not by themselves switch
+   * destination mode on. Every row that has ever existed carries `FI`/`EUR`/
+   * `local`, so treating them as a deliberate choice would activate the feature
+   * for people who never asked for it.
+   */
+  defaultCountryCode: countryCodeSchema,
+  defaultStoreRegion: storeRegionSchema,
+  /** Narrows which store countries appear, within whatever the region admits. */
+  preferredStoreCountries: z.array(countryCodeSchema),
+  includeNonEuStores: z.boolean(),
+  showUnknownShipping: z.boolean(),
+  warnAboutImportCharges: z.boolean(),
+  deliveryTimePreference: deliveryTimePreferenceSchema,
+
   updatedAt: isoDateTimeSchema,
 });
 export type UserSettings = z.infer<typeof userSettingsSchema>;
@@ -52,6 +79,14 @@ export const updateUserSettingsSchema = z
     preferredStores: z.array(z.string().trim().max(64)).max(50).optional(),
     preferredCategories: z.array(z.string().trim().max(64)).max(50).optional(),
     currency: currencySchema.optional(),
+
+    defaultCountryCode: countryCodeSchema.optional(),
+    defaultStoreRegion: storeRegionSchema.optional(),
+    preferredStoreCountries: z.array(countryCodeSchema).max(14).optional(),
+    includeNonEuStores: z.boolean().optional(),
+    showUnknownShipping: z.boolean().optional(),
+    warnAboutImportCharges: z.boolean().optional(),
+    deliveryTimePreference: deliveryTimePreferenceSchema.optional(),
   })
   .refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update.');
 export type UpdateUserSettingsInput = z.infer<typeof updateUserSettingsSchema>;

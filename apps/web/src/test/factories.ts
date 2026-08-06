@@ -1,10 +1,18 @@
 import type {
   CanonicalOffer,
   CanonicalProductSummary,
+  ConvertedMoneyDto,
+  Currency,
   DealQuality,
+  DeliveredComparison,
+  DeliveredHistoryPoint,
+  DeliveryToDestination,
+  DestinationOffer,
   MatchCandidate,
+  MoneyAmountDto,
   OfferComparisonDto,
   ProductSummary,
+  WatchlistItem,
 } from '@deal-finder/shared';
 
 /**
@@ -272,6 +280,241 @@ export function makeMatchCandidate(overrides: Partial<MatchCandidate> = {}): Mat
       specifications: { 'Screen size': '65"', 'Energy class': 'F' },
       offerCount: 1,
     },
+    ...overrides,
+  };
+}
+
+/**
+ * Destination-aware builders.
+ *
+ * Every one of these produces a *complete, valid* DTO, and the card and table
+ * builders above deliberately do **not** call them: `makeProduct()` leaves
+ * `destinationOffer` absent so an existing card assertion keeps exercising the
+ * pre-expansion layout rather than silently starting to test the new one.
+ */
+export function makeMoneyAmount(major: number, currency: Currency = 'EUR'): MoneyAmountDto {
+  return { minorUnits: Math.round(major * 100), major, currency };
+}
+
+export function makeConvertedMoney(
+  overrides: Partial<ConvertedMoneyDto> = {},
+): ConvertedMoneyDto {
+  return {
+    original: makeMoneyAmount(299),
+    converted: makeMoneyAmount(299),
+    status: 'same-currency',
+    exchangeRate: null,
+    exchangeRateTimestamp: null,
+    rateAgeHours: null,
+    derivation: null,
+    isEstimate: false,
+    blocksCheapestClaim: false,
+    ...overrides,
+  };
+}
+
+/** A plain, complete, deliverable offer: €299 plus €12.90 to Finland. */
+export function makeDelivery(
+  overrides: Partial<DeliveryToDestination> = {},
+): DeliveryToDestination {
+  return {
+    destinationCountry: 'FI',
+    destinationCountryName: 'Finland',
+    sourceCountry: 'DE',
+    sourceCountryName: 'Germany',
+    shipsToDestination: true,
+    productPrice: makeConvertedMoney(),
+    shippingPrice: makeMoneyAmount(12.9),
+    taxesIncluded: true,
+    estimatedTax: null,
+    importDutyStatus: 'NONE',
+    estimatedImportFees: null,
+    totalDeliveredPrice: makeMoneyAmount(311.9),
+    deliveryMinDays: 3,
+    deliveryMaxDays: 6,
+    availability: 'IN_STOCK',
+    lastCheckedAt: new Date().toISOString(),
+    blocksCheapestClaim: false,
+    ...overrides,
+  };
+}
+
+/** The store publishes no delivery cost, so no total can be calculated. */
+export function makeUnknownShippingDelivery(): DeliveryToDestination {
+  return makeDelivery({ shippingPrice: null, totalDeliveredPrice: null });
+}
+
+/** No offer proves delivery to the destination. */
+export function makeUnshippableDelivery(): DeliveryToDestination {
+  return makeDelivery({
+    shipsToDestination: false,
+    shippingPrice: null,
+    totalDeliveredPrice: null,
+    deliveryMinDays: null,
+    deliveryMaxDays: null,
+    taxesIncluded: null,
+    sourceCountry: 'FR',
+    sourceCountryName: 'France',
+  });
+}
+
+/** Quoted in kronor and converted at a current rate. */
+export function makeConvertedDelivery(): DeliveryToDestination {
+  return makeDelivery({
+    sourceCountry: 'SE',
+    sourceCountryName: 'Sweden',
+    productPrice: makeConvertedMoney({
+      original: makeMoneyAmount(2990, 'SEK'),
+      converted: makeMoneyAmount(260.13),
+      status: 'converted',
+      exchangeRate: 0.087,
+      exchangeRateTimestamp: new Date().toISOString(),
+      rateAgeHours: 1,
+      derivation: 'direct',
+      isEstimate: true,
+    }),
+    shippingPrice: makeMoneyAmount(13.27),
+    totalDeliveredPrice: makeMoneyAmount(273.4),
+  });
+}
+
+/** Quoted in kronor with no usable rate: incomparable, not cheap. */
+export function makeRateMissingDelivery(): DeliveryToDestination {
+  return makeDelivery({
+    sourceCountry: 'SE',
+    sourceCountryName: 'Sweden',
+    productPrice: makeConvertedMoney({
+      original: makeMoneyAmount(2990, 'SEK'),
+      converted: null,
+      status: 'rate-missing',
+      blocksCheapestClaim: true,
+    }),
+    totalDeliveredPrice: null,
+    blocksCheapestClaim: true,
+  });
+}
+
+/** Converted, but on a rate too old to decide a winner. */
+export function makeStaleRateDelivery(): DeliveryToDestination {
+  return makeDelivery({
+    sourceCountry: 'DK',
+    sourceCountryName: 'Denmark',
+    productPrice: makeConvertedMoney({
+      original: makeMoneyAmount(1990, 'DKK'),
+      converted: makeMoneyAmount(266.66),
+      status: 'converted-stale',
+      exchangeRate: 0.134,
+      exchangeRateTimestamp: new Date(Date.now() - 10 * 86_400_000).toISOString(),
+      rateAgeHours: 240,
+      derivation: 'direct',
+      isEstimate: true,
+      blocksCheapestClaim: true,
+    }),
+    shippingPrice: makeMoneyAmount(13.27),
+    totalDeliveredPrice: makeMoneyAmount(279.93),
+    blocksCheapestClaim: true,
+  });
+}
+
+/** A route that leaves the EU customs union, so charges may be added on arrival. */
+export function makeDutiableDelivery(): DeliveryToDestination {
+  return makeDelivery({
+    sourceCountry: 'GB',
+    sourceCountryName: 'United Kingdom',
+    taxesIncluded: false,
+    importDutyStatus: 'POSSIBLE',
+  });
+}
+
+export function makeDestinationOffer(
+  overrides: Partial<DestinationOffer> = {},
+): DestinationOffer {
+  return {
+    id: 'offer-1',
+    productId: 'product-1',
+    store: {
+      id: 'store-1',
+      slug: 'techhalle',
+      name: 'TechHalle GmbH',
+      websiteUrl: 'https://techhalle.test',
+      logoUrl: null,
+      isActive: true,
+    },
+    isDemoStore: false,
+    delivery: makeDelivery(),
+    ...overrides,
+  };
+}
+
+/**
+ * A watchlist row.
+ *
+ * Defaults to Finland/EUR with a *list-price* target and no delivered target,
+ * which is exactly the shape every pre-expansion row has in the database — so a
+ * test that says nothing about destinations is testing the legacy row.
+ */
+export function makeWatchlistItem(overrides: Partial<WatchlistItem> = {}): WatchlistItem {
+  const now = new Date().toISOString();
+  return {
+    id: 'watch-1',
+    productId: 'product-1',
+    targetPrice: 249,
+    alertsEnabled: true,
+    lastAlertedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    product: makeProduct(),
+    targetComparison: { difference: -109, percentAway: -43.78, reached: true },
+    alertStatus: 'TARGET_REACHED',
+    priceChangeSincePrevious: null,
+
+    destinationCountry: 'FI',
+    destinationCountryName: 'Finland',
+    preferredCurrency: 'EUR',
+    targetDeliveredPrice: null,
+    deliveredComparison: null,
+    currentDeliveredPrice: null,
+    ...overrides,
+  };
+}
+
+/**
+ * One recorded observation of a delivered total.
+ *
+ * `totalDeliveredPrice: null` is the case that matters most — the store published
+ * no delivery cost that day — so it is one override away rather than buried.
+ */
+export function makeDeliveredHistoryPoint(
+  overrides: Partial<DeliveredHistoryPoint> = {},
+): DeliveredHistoryPoint {
+  return {
+    recordedAt: new Date(Date.UTC(2026, 6, 1)).toISOString(),
+    productPrice: makeMoneyAmount(299),
+    shippingPrice: makeMoneyAmount(12.9),
+    totalDeliveredPrice: makeMoneyAmount(311.9),
+    availability: 'IN_STOCK',
+    exchangeRate: null,
+    exchangeRateTimestamp: null,
+    ...overrides,
+  };
+}
+
+export function makeDeliveredComparison(
+  overrides: Partial<DeliveredComparison> = {},
+): DeliveredComparison {
+  return {
+    destinationCountry: 'FI',
+    destinationCountryName: 'Finland',
+    displayCurrency: 'EUR',
+    lowestDeliveredPrice: makeMoneyAmount(311.9),
+    highestDeliveredPrice: makeMoneyAmount(329),
+    lowestListedPrice: makeMoneyAmount(299),
+    cheapestDeliveredOfferId: 'offer-1',
+    cheapestDeliveredCaveat: null,
+    storesShippingToDestination: 2,
+    offersWithUnknownShipping: 0,
+    offersNotShippingToDestination: 0,
+    offersBlockedByExchangeRate: 0,
     ...overrides,
   };
 }

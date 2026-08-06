@@ -2,6 +2,14 @@ import { cn } from '@deal-finder/ui';
 import { BarChart3, Bookmark, Search, Settings, Tag } from 'lucide-react';
 import { useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { DestinationProvider } from '../../lib/destination';
+import { useSettings } from '../../lib/queries';
+import {
+  LG_BREAKPOINT_QUERY,
+  MD_BREAKPOINT_QUERY,
+  useMediaQuery,
+} from '../../lib/use-media-query';
+import { DestinationControls } from './DestinationControls';
 
 /**
  * Application shell: header navigation, main landmark, footer.
@@ -21,9 +29,57 @@ const NAV_ITEMS = [
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
+/**
+ * Wraps the shell in the destination provider.
+ *
+ * Separate from `AppShell` only because the provider needs `useSearchParams`,
+ * which requires a router above it, and because the settings query that seeds
+ * the controls must sit outside the component that reads the context.
+ *
+ * The settings values are *defaults for the controls*, never an activator: every
+ * user row carries `FI`/`EUR`/`local` whether or not anyone chose them, so
+ * treating them as a choice would switch destination mode on for a first-time
+ * visitor who has expressed no preference.
+ */
 export function AppShell() {
+  const settings = useSettings();
+
+  return (
+    <DestinationProvider
+      settingsDefaults={
+        settings.data
+          ? {
+              country: settings.data.defaultCountryCode,
+              currency: settings.data.currency,
+              region: settings.data.defaultStoreRegion,
+            }
+          : null
+      }
+    >
+      <AppShellLayout />
+    </DestinationProvider>
+  );
+}
+
+function AppShellLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const location = useLocation();
+
+  /**
+   * Which single copy of the destination controls is mounted.
+   *
+   * Decided in JavaScript rather than with `hidden lg:flex` / `md:block lg:hidden`,
+   * because those leave every copy in the DOM at every width. Two `<select>`
+   * elements both labelled "Deliver to" is not merely untidy: `getByLabel` matches
+   * hidden elements, so it makes the control ambiguous to every test and to
+   * anything else driving the page, and `SegmentedControl` is built on real radios
+   * whose groups would then have to be kept from fighting by name alone.
+   *
+   * `useMediaQuery` returns true with no `matchMedia`, so a non-browser render
+   * falls to the single header copy rather than to none.
+   */
+  const atLeastMd = useMediaQuery(MD_BREAKPOINT_QUERY);
+  const atLeastLg = useMediaQuery(LG_BREAKPOINT_QUERY);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -67,9 +123,13 @@ export function AppShell() {
           </nav>
 
           <div className="ml-auto flex items-center gap-3 md:ml-0">
-            <span className="hidden text-xs text-ink-500 lg:inline">
-              Electronics · Finland · EUR
-            </span>
+            {/*
+              Replaces the old static "Electronics · Finland · EUR" caption. That
+              string was a claim the product could not act on; these are the
+              controls that make it true. Placed after the nav in DOM order so the
+              skip link remains the first focusable element on every page.
+            */}
+            {atLeastLg && <DestinationControls idPrefix="header" layout="header" />}
 
             <button
               type="button"
@@ -128,7 +188,25 @@ export function AppShell() {
                 );
               })}
             </ul>
+
+            {/*
+              The narrow copy. The panel only exists below `md` and only while
+              open, and the other two copies are mounted on mutually exclusive
+              breakpoints, so exactly one set of these inputs is ever in the DOM.
+            */}
+            <DestinationControls idPrefix="mobile" layout="panel" className="mt-2" />
           </nav>
+        )}
+
+        {/*
+          Between `md` and `lg` the header has room for the nav but not for three
+          controls, and the hamburger is hidden. Without this band the destination
+          would be unreachable in that range.
+        */}
+        {atLeastMd && !atLeastLg && (
+          <div className="border-t border-line bg-surface px-4 py-2">
+            <DestinationControls idPrefix="tablet" layout="header" className="justify-end" />
+          </div>
         )}
       </header>
 

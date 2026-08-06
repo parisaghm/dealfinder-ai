@@ -1,5 +1,16 @@
 import {
   apiErrorSchema,
+  countriesResponseSchema,
+  deliveredHistoryResponseSchema,
+  productOffersResponseSchema,
+  storesResponseSchema,
+  type CountriesResponse,
+  type CountryCode,
+  type Currency,
+  type DeliveredHistoryResponse,
+  type ProductOffersResponse,
+  type StoreRegion,
+  type StoresResponse,
   canonicalHistoryResponseSchema,
   canonicalOffersResponseSchema,
   canonicalProductDetailsSchema,
@@ -202,6 +213,39 @@ export function toSearchParams(query: Partial<DealsQuery>): string {
   if (query.page && query.page > 1) params.set('page', String(query.page));
   if (query.limit) params.set('limit', String(query.limit));
 
+  /**
+   * The destination half.
+   *
+   * `country` is the switch, and everything here is skipped when it is absent —
+   * so a caller that knows nothing about destinations produces the byte-identical
+   * request it always produced, and the API takes its legacy path.
+   */
+  if (query.country) {
+    params.set('country', query.country);
+    if (query.currency) params.set('currency', query.currency);
+    if (query.region) params.set('region', query.region);
+    // `z.stringbool()` on the server, so these travel as words rather than as
+    // the empty string a bare `String(false)` would be mistaken for.
+    if (query.shipsToCountryOnly != null) {
+      params.set('shipsToCountryOnly', query.shipsToCountryOnly ? 'true' : 'false');
+    }
+    if (query.includeUnknownShipping != null) {
+      params.set('includeUnknownShipping', query.includeUnknownShipping ? 'true' : 'false');
+    }
+    if (query.includeNonEuStores != null) {
+      params.set('includeNonEuStores', query.includeNonEuStores ? 'true' : 'false');
+    }
+    if (query.maximumDeliveredPrice != null) {
+      params.set('maximumDeliveredPrice', String(query.maximumDeliveredPrice));
+    }
+    if (query.maximumShippingPrice != null) {
+      params.set('maximumShippingPrice', String(query.maximumShippingPrice));
+    }
+    if (query.maxDeliveryDays != null) {
+      params.set('maxDeliveryDays', String(query.maxDeliveryDays));
+    }
+  }
+
   const serialised = params.toString();
   return serialised ? `?${serialised}` : '';
 }
@@ -285,6 +329,60 @@ export const api = {
     request(
       `/api/products/${encodeURIComponent(id)}/history?days=${days}`,
       priceHistoryResponseSchema,
+      { signal },
+    ),
+
+  // ── Destination-aware reads ───────────────────────────────────────────────
+
+  countries: (signal?: AbortSignal): Promise<CountriesResponse> =>
+    request('/api/countries', countriesResponseSchema, { signal }),
+
+  /**
+   * Stores, optionally narrowed to those that can actually reach a country.
+   *
+   * Passing `country` is what makes the result authoritative: the response is
+   * derived from offers, not from each store's own declared delivery list.
+   */
+  stores: (
+    query: { country?: CountryCode; region?: StoreRegion } = {},
+    signal?: AbortSignal,
+  ): Promise<StoresResponse> => {
+    const params = new URLSearchParams();
+    if (query.country) params.set('country', query.country);
+    if (query.region) params.set('region', query.region);
+    const serialised = params.toString();
+    return request(`/api/stores${serialised ? `?${serialised}` : ''}`, storesResponseSchema, {
+      signal,
+    });
+  },
+
+  productOffers: (
+    id: string,
+    query: { country: CountryCode; currency: Currency },
+    signal?: AbortSignal,
+  ): Promise<ProductOffersResponse> =>
+    request(
+      `/api/products/${encodeURIComponent(id)}/offers?country=${query.country}&currency=${query.currency}`,
+      productOffersResponseSchema,
+      { signal },
+    ),
+
+  /**
+   * The destination-specific series, from `StoreOfferPriceHistory`.
+   *
+   * A different endpoint shape from `priceHistory` above on purpose: that one
+   * returns list prices with no destination, and the two must never be swapped
+   * for one another — an item's price history says nothing about what delivery to
+   * a given country cost on a given date.
+   */
+  destinationHistory: (
+    id: string,
+    query: { country: CountryCode; currency: Currency; days?: number },
+    signal?: AbortSignal,
+  ): Promise<DeliveredHistoryResponse> =>
+    request(
+      `/api/products/${encodeURIComponent(id)}/history?days=${String(query.days ?? 90)}&country=${query.country}&currency=${query.currency}`,
+      deliveredHistoryResponseSchema,
       { signal },
     ),
 

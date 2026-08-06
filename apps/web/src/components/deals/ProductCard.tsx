@@ -3,12 +3,16 @@ import {
   formatDiscount,
   formatMoney,
   formatRelativeTime,
+  type Currency,
+  type DeliveryToDestination,
   type ProductSummary,
 } from '@deal-finder/shared';
 import { Badge, Button, cn } from '@deal-finder/ui';
 import { AlertTriangle, Bookmark, BookmarkCheck, ExternalLink, ImageOff } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { destinationPath } from '../../lib/destination';
+import { DeliveryDetails } from './DeliveryDetails';
 
 /**
  * Product card.
@@ -27,17 +31,44 @@ export interface ProductCardProps {
   product: ProductSummary;
   onTrack?: (product: ProductSummary) => void;
   trackPending?: boolean;
+  /**
+   * Delivery to the selected destination, when one is selected.
+   *
+   * Nullable and defaulted to null, which is the entire compatibility strategy:
+   * with null this card renders exactly what it rendered before the product knew
+   * what a country was, so every existing card assertion still describes real
+   * behaviour rather than a legacy branch nobody reaches.
+   */
+  delivery?: DeliveryToDestination | null;
+  /** Required alongside `delivery`; see `DeliveryDetails`. */
+  displayCurrency?: Currency | null;
+  /** A fictional retailer. Disclosed on the card, never only in a tooltip. */
+  isDemoStore?: boolean;
 }
 
-export function ProductCard({ product, onTrack, trackPending = false }: ProductCardProps) {
+export function ProductCard({
+  product,
+  onTrack,
+  trackPending = false,
+  delivery = null,
+  displayCurrency = null,
+  isDemoStore = false,
+}: ProductCardProps) {
   const discountLabel = formatDiscount(product.discountPercent);
   const untrustworthy = !product.dealQuality.claimedDiscountTrustworthy;
   const outOfStock = product.availability === 'OUT_OF_STOCK';
 
+  /*
+    The destination follows the click, for the reason given in GroupedProductCard:
+    a URL-only destination has nothing in storage to fall back on, so dropping it
+    here would answer the detail page for the wrong country.
+  */
+  const detailsTo = destinationPath(`/products/${product.id}`, delivery ? { country: delivery.destinationCountry, currency: displayCurrency ?? 'EUR' } : null);
+
   return (
     <article className="flex flex-col overflow-hidden rounded-card border border-line bg-surface shadow-card transition-shadow duration-150 hover:shadow-raised">
       <Link
-        to={`/products/${product.id}`}
+        to={detailsTo}
         className="group relative block bg-surface-muted"
         aria-label={`View details for ${product.name}`}
       >
@@ -79,7 +110,7 @@ export function ProductCard({ product, onTrack, trackPending = false }: ProductC
         </div>
 
         <h3 className="text-sm leading-snug font-semibold">
-          <Link to={`/products/${product.id}`} className="hover:text-accent-700">
+          <Link to={detailsTo} className="hover:text-accent-700">
             {product.name}
           </Link>
         </h3>
@@ -113,6 +144,22 @@ export function ProductCard({ product, onTrack, trackPending = false }: ProductC
                 : `+ ${formatMoney(product.shippingPrice, product.currency)} delivery · ${formatMoney(product.effectivePrice, product.currency)} total`}
           </span>
         </div>
+
+        {/*
+          The destination block sits below the store's own price rather than
+          replacing it. Both numbers matter and they answer different questions —
+          "what does this shop charge" and "what would it cost me, here" — and
+          collapsing them would hide the very gap this feature exists to show.
+        */}
+        {delivery && displayCurrency && (
+          <div className="border-t border-line pt-3">
+            <DeliveryDetails
+              delivery={delivery}
+              displayCurrency={displayCurrency}
+              isDemoStore={isDemoStore}
+            />
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-1.5">
           <DealQualityInline product={product} />

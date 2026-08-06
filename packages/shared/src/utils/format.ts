@@ -45,6 +45,115 @@ export function formatMoney(
   return moneyFormatter(currency, locale, decimals).format(rounded);
 }
 
+/**
+ * The symbol to put inside an input where the user types an amount.
+ *
+ * Derived from `Intl` rather than from a hand-written map, so a currency added to
+ * `CURRENCIES` needs no change here and cannot end up quietly wearing a euro
+ * sign. The code itself is the fallback: "SEK" in the field is unambiguous, which
+ * is the only thing that matters for a price the user is about to commit to.
+ */
+export function currencySymbol(currency: Currency, locale: string = DEFAULT_LOCALE): string {
+  const parts = moneyFormatter(currency, locale, 0).formatToParts(0);
+  return parts.find((part) => part.type === 'currency')?.value ?? currency;
+}
+
+/**
+ * A `MoneyAmount` from the wire, formatted.
+ *
+ * Takes the whole object rather than a number so the currency travels with the
+ * value it belongs to. Passing them separately is how a Swedish price ends up
+ * rendered with a euro sign — the exact failure this feature exists to prevent.
+ */
+export function formatMoneyAmount(
+  amount: { readonly major: number; readonly currency: Currency } | null | undefined,
+  locale: string = DEFAULT_LOCALE,
+): string {
+  if (amount == null) return '—';
+  return formatMoney(amount.major, amount.currency, locale);
+}
+
+/**
+ * A converted amount, always disclosing that a conversion happened.
+ *
+ * Returns null when there is nothing to disclose — a same-currency amount was
+ * not converted, and labelling it "converted" would be noise that trains people
+ * to ignore the label where it matters.
+ */
+export function formatConverted(
+  converted: {
+    readonly original: { readonly major: number; readonly currency: Currency };
+    readonly converted: { readonly major: number; readonly currency: Currency } | null;
+    readonly exchangeRate: number | null;
+    readonly exchangeRateTimestamp: string | null;
+  },
+  locale: string = DEFAULT_LOCALE,
+): string | null {
+  const { original, exchangeRate, exchangeRateTimestamp } = converted;
+  if (converted.converted == null || exchangeRate == null) return null;
+  if (original.currency === converted.converted.currency) return null;
+
+  const rate = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  }).format(exchangeRate);
+
+  const observed = exchangeRateTimestamp ? formatDate(exchangeRateTimestamp, locale) : null;
+
+  return [
+    `Converted from ${formatMoney(original.major, original.currency, locale)}`,
+    `at 1 ${original.currency} = ${rate} ${converted.converted.currency}`,
+    observed ? `(${observed})` : null,
+    `— the store charges in ${original.currency}`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * How old an exchange rate is, in words a shopper can weigh.
+ *
+ * Deliberately vague at the top end: "5 days ago" is the useful signal, and
+ * quoting 127 hours implies a precision that does not change any decision.
+ */
+export function formatRateAge(ageHours: number | null | undefined): string {
+  if (ageHours == null || !Number.isFinite(ageHours)) return 'at an unknown time';
+  if (ageHours < 1) return 'less than an hour ago';
+  if (ageHours < 2) return 'an hour ago';
+  if (ageHours < 48) return `${String(Math.round(ageHours))} hours ago`;
+  return `${String(Math.round(ageHours / 24))} days ago`;
+}
+
+/**
+ * The display locale for a delivery country.
+ *
+ * Only the eight supported destinations are mapped; anything else falls back to
+ * `DEFAULT_LOCALE`. Kept as a flat map rather than derived from the country code
+ * because the language and the country genuinely differ (Belgium, Switzerland),
+ * so `xx-XX` guessing would be wrong precisely where it matters.
+ */
+const LOCALE_BY_COUNTRY: Record<string, string> = {
+  FI: 'fi-FI',
+  SE: 'sv-SE',
+  DE: 'de-DE',
+  NL: 'nl-NL',
+  FR: 'fr-FR',
+  ES: 'es-ES',
+  IT: 'it-IT',
+  DK: 'da-DK',
+  BE: 'nl-BE',
+  PT: 'pt-PT',
+  AT: 'de-AT',
+  NO: 'nb-NO',
+  CH: 'de-CH',
+  GB: 'en-GB',
+};
+
+export function localeForCountry(code: string | null | undefined): string {
+  if (code == null) return DEFAULT_LOCALE;
+  return LOCALE_BY_COUNTRY[code] ?? DEFAULT_LOCALE;
+}
+
 /** `-32 %` style discount label. Returns null when there is nothing to show. */
 export function formatDiscount(percent: number): string | null {
   if (!Number.isFinite(percent) || percent <= 0) return null;

@@ -1,17 +1,30 @@
-import { formatMoney, humanise, type OfferSort } from '@deal-finder/shared';
+import { countryName, formatMoney, humanise, type OfferSort } from '@deal-finder/shared';
 import { Badge, Card, ErrorState, SectionHeading, Skeleton } from '@deal-finder/ui';
 import { ArrowLeft, ImageOff, Store } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { DeliveredComparisonTable } from '../components/deals/DeliveredComparisonTable';
 import { OfferComparisonTable } from '../components/deals/OfferComparisonTable';
 import { CrossStorePriceChart } from '../components/product/CrossStorePriceChart';
+import {
+  DestinationPriceChart,
+  type DeliveredStoreSeries,
+} from '../components/product/DestinationPriceChart';
 import { MatchExplanationPanel } from '../components/product/MatchExplanationPanel';
+import { DestinationSummary } from '../components/layout/DestinationControls';
 import {
   buildCompareParams,
   paramsToOfferSort,
   paramsToVisibleStores,
 } from '../lib/compare-params';
-import { useCanonicalHistory, useCanonicalOffers, useCanonicalProduct } from '../lib/queries';
+import { applyDestinationToParams, useActiveDestination } from '../lib/destination';
+import {
+  useCanonicalHistory,
+  useCanonicalOffers,
+  useCanonicalProduct,
+  useDestinationHistories,
+  useProductOffers,
+} from '../lib/queries';
 
 const HISTORY_DAYS = 90;
 
@@ -32,11 +45,65 @@ export function CompareProductPage() {
   const offers = useCanonicalOffers(id, sort);
   const history = useCanonicalHistory(id, HISTORY_DAYS);
 
+  const destination = useActiveDestination();
+
+  /**
+   * Destination offers for this product group.
+   *
+   * Keyed on any one member listing: the API resolves the whole canonical group
+   * from it, so one request covers every store rather than one per offer. Disabled
+   * entirely when no destination is selected, so the pre-expansion page issues
+   * exactly the requests it always did.
+   */
+  const destinationOffers = useProductOffers(
+    destination ? offers.data?.offers[0]?.id : undefined,
+    destination,
+  );
+
+  /**
+   * One delivered-price series per store.
+   *
+   * The history endpoint answers per *listing* — one offer per destination — so a
+   * chart with a line per store needs one request per listing. The listings come
+   * from the offers already loaded above, so no extra lookup is needed to find
+   * them, and each response is cached under the same key the product detail page
+   * uses.
+   */
+  const listingIds = useMemo(
+    () => (destination ? (offers.data?.offers ?? []).map((offer) => offer.id) : []),
+    [destination, offers.data],
+  );
+  const destinationHistories = useDestinationHistories(listingIds, destination, HISTORY_DAYS);
+
+  const deliveredSeries = useMemo<DeliveredStoreSeries[]>(() => {
+    if (!destination) return [];
+    const offerList = offers.data?.offers ?? [];
+
+    return destinationHistories
+      .map((result, index): DeliveredStoreSeries | null => {
+        const offer = offerList[index];
+        if (!offer || !result.data) return null;
+        return {
+          storeSlug: offer.store.slug,
+          storeName: offer.store.name,
+          hasDestinationOffer: result.data.hasDestinationOffer,
+          currency: result.data.currency,
+          points: result.data.points,
+        };
+      })
+      .filter((entry): entry is DeliveredStoreSeries => entry !== null);
+  }, [destination, destinationHistories, offers.data]);
+
   const allStoreSlugs = useMemo(
     () => (history.data?.series ?? []).map((entry) => entry.storeSlug),
     [history.data],
   );
+  const deliveredStoreSlugs = useMemo(
+    () => deliveredSeries.filter((entry) => entry.hasDestinationOffer).map((entry) => entry.storeSlug),
+    [deliveredSeries],
+  );
   const visibleStores = paramsToVisibleStores(searchParams, allStoreSlugs);
+  const visibleDeliveredStores = paramsToVisibleStores(searchParams, deliveredStoreSlugs);
 
   if (product.isPending) return <CompareSkeleton />;
 
@@ -65,18 +132,34 @@ export function CompareProductPage() {
     (offer) => offer.id === comparison.cheapestTotalOfferId,
   );
 
+  /**
+   * `buildCompareParams` returns a *fresh* query string, so anything not rebuilt
+   * is dropped. The destination has to be re-applied or changing the sort would
+   * silently strip `country` from a link the user may be about to share — and the
+   * page would fall back to the stored choice, which is not the same promise.
+   */
+  const withDestination = (params: URLSearchParams) =>
+    destination ? applyDestinationToParams(params, destination) : params;
+
+  /** The slug universe the visibility param is relative to, for this mode. */
+  const chartSlugs = destination ? deliveredStoreSlugs : allStoreSlugs;
+
   const setSort = (next: OfferSort) => {
-    setSearchParams(buildCompareParams({ sort: next, visibleStores, allStoreSlugs }), {
-      replace: false,
-    });
+    setSearchParams(
+      withDestination(
+        buildCompareParams({ sort: next, visibleStores, allStoreSlugs: chartSlugs }),
+      ),
+      { replace: false },
+    );
   };
 
   const setVisibleStores = (slugs: string[]) => {
     // `replace` because toggling a chart series is not navigation — filling the
     // back stack with it would make the browser's back button useless here.
-    setSearchParams(buildCompareParams({ sort, visibleStores: slugs, allStoreSlugs }), {
-      replace: true,
-    });
+    setSearchParams(
+      withDestination(buildCompareParams({ sort, visibleStores: slugs, allStoreSlugs: chartSlugs })),
+      { replace: true },
+    );
   };
 
   return (
@@ -104,6 +187,19 @@ export function CompareProductPage() {
             </div>
 
             <h1 className="text-xl leading-snug font-bold sm:text-2xl">{data.name}</h1>
+
+            {/*
+              The destination is stated next to the title, because every number
+              below it is destination-specific and a delivered total with no
+              destination attached is not a figure anyone can act on.
+            */}
+            {destination && (
+              <DestinationSummary
+                country={destination.country}
+                currency={destination.currency}
+                className="text-sm"
+              />
+            )}
 
             {cheapest ? (
               <p className="text-lg font-semibold">
@@ -159,36 +255,76 @@ export function CompareProductPage() {
 
       {/* ── The comparison ────────────────────────────────────────────────── */}
       <section className="flex flex-col gap-4">
-        <SectionHeading
-          title="Compare offers"
-          description="Total price includes delivery, which is what the cheapest row is chosen by."
-        />
-        <OfferComparisonTable
-          offers={offerData.offers}
-          currency={data.currency}
-          productName={data.name}
-          sort={sort}
-          onSortChange={setSort}
-          comparison={comparison}
-        />
+        {destination && destinationOffers.data ? (
+          <>
+            <SectionHeading
+              title={`Compare delivered totals to ${countryName(destination.country)}`}
+              description="Each total is the product price plus delivery to your destination, with tax and any import charges stated. The cheapest row is chosen by that total, not by the shelf price."
+            />
+            <DeliveredComparisonTable
+              offers={destinationOffers.data.offers}
+              unavailableHere={destinationOffers.data.unavailableHere}
+              comparison={destinationOffers.data.comparison}
+              country={destination.country}
+              currency={destination.currency}
+            />
+          </>
+        ) : (
+          <>
+            <SectionHeading
+              title="Compare offers"
+              description="Total price includes delivery, which is what the cheapest row is chosen by."
+            />
+            <OfferComparisonTable
+              offers={offerData.offers}
+              currency={data.currency}
+              productName={data.name}
+              sort={sort}
+              onSortChange={setSort}
+              comparison={comparison}
+            />
+          </>
+        )}
       </section>
 
       {/* ── The evidence ──────────────────────────────────────────────────── */}
       <Card className="flex flex-col gap-4">
-        <SectionHeading
-          title="Price history across stores"
-          description="What each store has charged while we have been tracking this product."
-        />
-        {history.isPending ? (
-          <Skeleton className="h-72 w-full" />
+        {destination ? (
+          /*
+            A different series, not a relabelled one: `StoreOfferPriceHistory`
+            records the delivered total per destination, while the chart below it
+            records shelf prices with no destination at all. Substituting one for
+            the other would present a sticker price as a doorstep price.
+          */
+          destinationHistories.some((result) => result.isPending) ? (
+            <Skeleton className="h-72 w-full" />
+          ) : (
+            <DestinationPriceChart
+              series={deliveredSeries}
+              country={destination.country}
+              displayCurrency={destination.currency}
+              visibleStoreSlugs={visibleDeliveredStores}
+              onVisibleStoresChange={setVisibleStores}
+            />
+          )
         ) : (
-          <CrossStorePriceChart
-            series={history.data?.series ?? []}
-            currency={data.currency}
-            visibleStoreSlugs={visibleStores}
-            onVisibleStoresChange={setVisibleStores}
-            crossStoreLow={history.data?.crossStoreLow?.price ?? null}
-          />
+          <>
+            <SectionHeading
+              title="Price history across stores"
+              description="What each store has charged while we have been tracking this product."
+            />
+            {history.isPending ? (
+              <Skeleton className="h-72 w-full" />
+            ) : (
+              <CrossStorePriceChart
+                series={history.data?.series ?? []}
+                currency={data.currency}
+                visibleStoreSlugs={visibleStores}
+                onVisibleStoresChange={setVisibleStores}
+                crossStoreLow={history.data?.crossStoreLow?.price ?? null}
+              />
+            )}
+          </>
         )}
       </Card>
 

@@ -1,4 +1,11 @@
-import { formatMoney, type DealGrouping } from '@deal-finder/shared';
+import {
+  DEAL_SORT_OPTIONS,
+  formatMoney,
+  type CountryCode,
+  type Currency,
+  type DealGrouping,
+  type DestinationProductSummary,
+} from '@deal-finder/shared';
 import {
   Badge,
   Button,
@@ -15,8 +22,13 @@ import { BookmarkPlus, SearchX, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FilterPanel, SortSelect, type FilterValues } from '../components/deals/FilterPanel';
-import { GroupedProductCard } from '../components/deals/GroupedProductCard';
+import {
+  GroupedProductCard,
+  type GroupDestinationSummary,
+} from '../components/deals/GroupedProductCard';
 import { ProductCard } from '../components/deals/ProductCard';
+import { DestinationSummary } from '../components/layout/DestinationControls';
+import { applyDestinationToParams, useActiveDestination } from '../lib/destination';
 import { useAddToWatchlist, useCreateSavedSearch, useDeals, useMeta } from '../lib/queries';
 import {
   buildSearchParams,
@@ -46,7 +58,16 @@ export function SearchResultsPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
-  const query = paramsToDealsQuery(searchParams, PAGE_SIZE);
+  /**
+   * The active destination, or null.
+   *
+   * Null is what keeps this page's legacy behaviour intact: `paramsToDealsQuery`
+   * then adds no destination fields, the API takes its legacy path, and every
+   * card receives `null` and renders as it always did.
+   */
+  const destination = useActiveDestination();
+
+  const query = paramsToDealsQuery(searchParams, PAGE_SIZE, destination);
   const filters = paramsToFilterValues(searchParams);
   const sort = paramsToSort(searchParams);
   const grouping = paramsToGrouping(searchParams);
@@ -57,8 +78,20 @@ export function SearchResultsPage() {
   // which would desynchronise from the URL on navigation.
   const deals = useDeals({ ...query, page: 1, limit: page * PAGE_SIZE });
 
+  /**
+   * Re-attach the destination to a freshly built parameter set.
+   *
+   * `buildSearchParams` constructs a new `URLSearchParams` from the filter form,
+   * so on its own it would silently drop `country`, `currency` and `region` every
+   * time a filter, sort or grouping changed — the user's destination would
+   * evaporate on their next click. The destination is owned by the provider, so it
+   * is re-applied through the provider's own helper rather than copied by hand.
+   */
+  const withDestination = (next: URLSearchParams): URLSearchParams =>
+    destination ? applyDestinationToParams(next, destination) : next;
+
   const updateParams = (next: URLSearchParams) => {
-    setSearchParams(next, { replace: false });
+    setSearchParams(withDestination(next), { replace: false });
   };
 
   const applyFilters = (values: FilterValues) => {
@@ -78,6 +111,8 @@ export function SearchResultsPage() {
     const text = searchParams.get('query');
     if (text) next.set('query', text);
     if (grouping !== 'none') next.set('group', grouping);
+    // Clearing *filters* must not clear the destination: they are different
+    // decisions, and one button should undo only the one it names.
     updateParams(next);
     setDrawerOpen(false);
   };
@@ -93,6 +128,24 @@ export function SearchResultsPage() {
   const groupedProductIds = new Set(groups.flatMap((group) => group.productIds));
   const ungroupedItems =
     grouping === 'canonical' ? items.filter((item) => !groupedProductIds.has(item.id)) : items;
+
+  /**
+   * Destination facts per group, aggregated from the offers already on the page.
+   *
+   * No extra request: a grouped card decorates a page that has already been
+   * selected and ordered, and one request per group would be an N+1 on the most
+   * frequently rendered component in the product.
+   */
+  const destinationByGroup = new Map<string, GroupDestinationSummary>();
+  if (destination) {
+    for (const group of groups) {
+      const groupItems = items.filter((item) => group.productIds.includes(item.id));
+      destinationByGroup.set(
+        group.canonicalProductId,
+        summariseGroupDestination(groupItems, group.canonical.storeCount, destination),
+      );
+    }
+  }
 
   // Announce result counts to screen readers when they change.
   const resultSummary = pagination
@@ -118,6 +171,15 @@ export function SearchResultsPage() {
             {deals.isPending ? 'Searching…' : resultSummary}
           </p>
 
+          {/*
+            The destination is named on the results page itself, not only in the
+            header. A delivered total with no destination attached to it is not a
+            number anyone can act on.
+          */}
+          {destination && (
+            <DestinationSummary country={destination.country} currency={destination.currency} />
+          )}
+
           {applied && (applied.interpretation.length > 0 || hasActiveFilters(applied)) && (
             <div className="flex flex-wrap items-center gap-1.5">
               {applied.interpretation.map((note) => (
@@ -136,9 +198,36 @@ export function SearchResultsPage() {
               )}
             </div>
           )}
+
+          {/*
+            What the destination filters removed, stated rather than applied
+            silently. An offer that vanishes without explanation reads as an offer
+            that does not exist, which is a different and false claim.
+          */}
+          {applied?.destination && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {applied.destination.excludedNotShipping > 0 && (
+                <Badge tone="warn">
+                  {applied.destination.excludedNotShipping}{' '}
+                  {applied.destination.excludedNotShipping === 1 ? 'product' : 'products'} cannot be
+                  delivered to {applied.destination.countryName}
+                </Badge>
+              )}
+              {applied.destination.excludedUnknownShipping > 0 && (
+                <Badge tone="warn">
+                  {applied.destination.excludedUnknownShipping} hidden for unknown delivery cost
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
+        {/*
+          `flex-wrap`, because at 320px the view toggle and the sort select
+          together are wider than the viewport and would otherwise scroll the
+          whole page sideways rather than stacking.
+        */}
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="secondary"
             size="sm"
@@ -179,6 +268,10 @@ export function SearchResultsPage() {
 
           <SortSelect
             value={sort}
+            // `lowest-delivered` is offered only when there is a destination to
+            // deliver to. Without one it would have nothing to sort on, and a
+            // sort option that cannot do what its name says is worse than none.
+            options={destination ? DEAL_SORT_OPTIONS : undefined}
             onChange={(next) =>
               updateParams(
                 buildSearchParams({
@@ -202,6 +295,7 @@ export function SearchResultsPage() {
               values={filters}
               onApply={applyFilters}
               onClear={clearFilters}
+              destination={destination}
             />
           </Card>
 
@@ -279,12 +373,25 @@ export function SearchResultsPage() {
                   <GroupedProductCard
                     key={group.canonicalProductId}
                     group={group.canonical}
+                    destination={destinationByGroup.get(group.canonicalProductId) ?? null}
                     trackPending={
                       addToWatchlist.isPending &&
                       addToWatchlist.variables?.productId === group.canonical.bestOffer?.id
                     }
                     onTrackBest={(offer) =>
-                      addToWatchlist.mutate({ productId: offer.id, alertsEnabled: true })
+                      addToWatchlist.mutate({
+                        productId: offer.id,
+                        alertsEnabled: true,
+                        // A tracked target belongs to a destination. Sending the
+                        // selected one means "notify me about getting it *here*",
+                        // which is the only question the user actually asked.
+                        ...(destination
+                          ? {
+                              destinationCountry: destination.country,
+                              preferredCurrency: destination.currency,
+                            }
+                          : {}),
+                      })
                     }
                   />
                 ))}
@@ -292,11 +399,23 @@ export function SearchResultsPage() {
                   <ProductCard
                     key={product.id}
                     product={product}
+                    delivery={product.destinationOffer ?? null}
+                    displayCurrency={destination?.currency ?? null}
+                    isDemoStore={product.isDemoStore ?? false}
                     trackPending={
                       addToWatchlist.isPending && addToWatchlist.variables?.productId === product.id
                     }
                     onTrack={(target) =>
-                      addToWatchlist.mutate({ productId: target.id, alertsEnabled: true })
+                      addToWatchlist.mutate({
+                        productId: target.id,
+                        alertsEnabled: true,
+                        ...(destination
+                          ? {
+                              destinationCountry: destination.country,
+                              preferredCurrency: destination.currency,
+                            }
+                          : {}),
+                      })
                     }
                   />
                 ))}
@@ -332,11 +451,64 @@ export function SearchResultsPage() {
             onApply={applyFilters}
             onClear={clearFilters}
             onClose={() => setDrawerOpen(false)}
+            destination={destination}
           />
         </FilterDrawer>
       )}
     </div>
   );
+}
+
+/**
+ * Aggregate one group's destination facts from the offers on this page.
+ *
+ * Deliberately counts `storesShipping` from offers that carry
+ * `shipsToDestination`, never from any store's declared delivery list: a store
+ * can declare a country and still have no offer for this particular product
+ * there, and repeating the declaration as a delivery promise is the one claim
+ * this feature must never make.
+ *
+ * `storesTotal` is the group's full store count from the canonical record, so
+ * "4 of 7" compares against every store that sells the thing rather than only
+ * those that happened to survive the destination filter.
+ */
+function summariseGroupDestination(
+  groupItems: readonly DestinationProductSummary[],
+  storesTotal: number,
+  destination: { country: CountryCode; currency: Currency },
+): GroupDestinationSummary {
+  const offers = groupItems
+    .map((item) => item.destinationOffer)
+    .filter((offer): offer is NonNullable<typeof offer> => offer != null);
+
+  const shippable = offers.filter((offer) => offer.shipsToDestination);
+
+  const deliveredTotals = shippable
+    .map((offer) => offer.totalDeliveredPrice)
+    .filter((amount): amount is NonNullable<typeof amount> => amount != null);
+  const listedPrices = shippable
+    .map((offer) => offer.productPrice.converted)
+    .filter((amount): amount is NonNullable<typeof amount> => amount != null);
+
+  const lowestBy = <T extends { minorUnits: number }>(values: readonly T[]): T | null =>
+    values.reduce<T | null>(
+      (best, value) => (best == null || value.minorUnits < best.minorUnits ? value : best),
+      null,
+    );
+
+  return {
+    country: destination.country,
+    currency: destination.currency,
+    lowestDelivered: lowestBy(deliveredTotals),
+    lowestListed: lowestBy(listedPrices),
+    storesShipping: shippable.length,
+    // Never report fewer stores in total than are shipping: the page can only
+    // hold offers it was sent, and a stale canonical count must not produce
+    // "5 of 3".
+    storesTotal: Math.max(storesTotal, shippable.length),
+    offersWithUnknownShipping: shippable.filter((offer) => offer.totalDeliveredPrice == null).length,
+    hasDemoStore: groupItems.some((item) => item.isDemoStore === true),
+  };
 }
 
 function hasActiveFilters(applied: {
