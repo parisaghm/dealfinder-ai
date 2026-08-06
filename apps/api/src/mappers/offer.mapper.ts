@@ -12,6 +12,7 @@ import {
   type CountryCode,
   type Currency,
   type DeliveredComparison,
+  type DeliveredComparisonResult,
   type DeliveredHistoryPoint,
   type DeliveredSortableOffer,
   type DeliveryToDestination,
@@ -346,17 +347,7 @@ export function toDeliveredSortable(
 
 /** Wrap a shared comparison result in its destination and currency. */
 export function toDeliveredComparison(
-  result: {
-    lowestDeliveredMinorUnits: number | null;
-    highestDeliveredMinorUnits: number | null;
-    lowestListedMinorUnits: number | null;
-    cheapestDeliveredOfferId: string | null;
-    cheapestDeliveredCaveat: string | null;
-    storesShippingToDestination: number;
-    offersWithUnknownShipping: number;
-    offersNotShippingToDestination: number;
-    offersBlockedByExchangeRate: number;
-  },
+  result: DeliveredComparisonResult,
   destinationCountry: CountryCode,
   displayCurrency: Currency,
 ): DeliveredComparison {
@@ -371,7 +362,7 @@ export function toDeliveredComparison(
     highestDeliveredPrice: amount(result.highestDeliveredMinorUnits),
     lowestListedPrice: amount(result.lowestListedMinorUnits),
     cheapestDeliveredOfferId: result.cheapestDeliveredOfferId,
-    cheapestDeliveredCaveat: result.cheapestDeliveredCaveat,
+    cheapestDeliveredCaveats: result.cheapestDeliveredCaveats,
     storesShippingToDestination: result.storesShippingToDestination,
     offersWithUnknownShipping: result.offersWithUnknownShipping,
     offersNotShippingToDestination: result.offersNotShippingToDestination,

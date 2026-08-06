@@ -1,6 +1,7 @@
 import {
   countryName,
   formatAvailability,
+  formatDeliveredCaveats,
   formatMoneyAmount,
   formatRateAge,
   formatRelativeTime,
@@ -100,6 +101,11 @@ export function DeliveredComparisonTable({
   const full = useMediaQuery(LG_BREAKPOINT_QUERY);
   const locale = localeForCountry(country);
 
+  // Written here rather than on the server, so the amount inside the sentence
+  // goes through the same `formatMoney`, locale and currency as the cell it is
+  // talking about.
+  const caveatText = formatDeliveredCaveats(comparison.cheapestDeliveredCaveats, currency, locale);
+
   const columns = full ? COLUMNS : COLUMNS.filter((column) => column.tier === 'always');
 
   // Named once, from every row shown — including the ones that cannot deliver
@@ -197,9 +203,9 @@ export function DeliveredComparisonTable({
 
       {/* ── Caveats, beneath the table where they qualify the whole thing ── */}
       <div className="flex flex-col gap-1.5">
-        {comparison.cheapestDeliveredCaveat && (
-          <p className="text-xs text-warn-800" role="note">
-            {comparison.cheapestDeliveredCaveat}
+        {caveatText && (
+          <p className="text-xs text-warn-800" role="note" data-testid="delivered-caveat">
+            {caveatText}
           </p>
         )}
         {comparison.cheapestDeliveredOfferId == null && (

@@ -174,6 +174,23 @@ export const destinationOfferSchema = z.object({
 export type DestinationOffer = z.infer<typeof destinationOfferSchema>;
 
 /**
+ * One qualification on the comparison, mirroring `DeliveredCaveat` in
+ * matching/delivered-sort.ts. The amount stays in minor units and the store
+ * stays named so the sentence can be written in the destination's locale.
+ */
+export const deliveredCaveatSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('cheaper-offer-skipped'),
+    amountMinorUnits: z.number().int(),
+    storeName: z.string().min(1),
+    reason: z.enum(['not-purchasable', 'stale-rate']),
+  }),
+  z.object({ kind: z.literal('unknown-shipping'), count: z.number().int().positive() }),
+  z.object({ kind: z.literal('not-shipping'), count: z.number().int().positive() }),
+]);
+export type DeliveredCaveatDto = z.infer<typeof deliveredCaveatSchema>;
+
+/**
  * Summary of a destination-aware offer set.
  *
  * Deliberately parallel to `OfferComparison` in matching/offer-sort.ts, and for
@@ -192,8 +209,17 @@ export const deliveredComparisonSchema = z.object({
   lowestListedPrice: moneyAmountSchema.nullable(),
 
   cheapestDeliveredOfferId: idSchema.nullable(),
-  /** Why a cheaper-looking offer was not crowned. Null when there is nothing to explain. */
-  cheapestDeliveredCaveat: z.string().nullable(),
+  /**
+   * Why a cheaper-looking offer was not crowned. Empty when there is nothing to
+   * explain.
+   *
+   * Structured rather than prose so the amount inside the sentence is formatted
+   * where the destination locale is known — beside the table cell it refers to,
+   * by the same `formatMoney`. A server-rendered sentence would have to choose a
+   * format before it knows the destination, and did: it read `265.90` next to a
+   * table showing `265,90 €`.
+   */
+  cheapestDeliveredCaveats: z.array(deliveredCaveatSchema),
 
   /** Counted from offers, not from store metadata. */
   storesShippingToDestination: z.number().int().nonnegative(),

@@ -1,3 +1,6 @@
+import { toMajor } from '../money/money';
+import type { Currency } from '../schemas/common';
+import { DEFAULT_LOCALE, formatMoney } from '../utils/format';
 import { PURCHASABLE } from './offer-sort';
 
 /**
@@ -101,25 +104,84 @@ export function sortDeliveredOffers<T extends DeliveredSortableOffer>(
   });
 }
 
+/**
+ * A reason the comparison has to qualify itself — as data, not as prose.
+ *
+ * Amounts stay in minor units and stores stay named rather than interpolated,
+ * because the sentence has to be rendered in the destination's locale and
+ * display currency. A caveat built as a string here would have to pick a format
+ * before it knows where it is going, and the result is the mismatch this type
+ * exists to prevent: `265.90` in the note beside `265,90 €` in the table.
+ *
+ * `formatDeliveredCaveats` turns these into that sentence, once, using the same
+ * `formatMoney` the table cells use.
+ */
+export type DeliveredCaveat =
+  | {
+      kind: 'cheaper-offer-skipped';
+      /** Delivered total of the cheaper offer, in display-currency minor units. */
+      amountMinorUnits: number;
+      storeName: string;
+      reason: 'not-purchasable' | 'stale-rate';
+    }
+  | { kind: 'unknown-shipping'; count: number }
+  | { kind: 'not-shipping'; count: number };
+
 export interface DeliveredComparisonResult {
   lowestDeliveredMinorUnits: number | null;
   highestDeliveredMinorUnits: number | null;
   lowestListedMinorUnits: number | null;
   cheapestDeliveredOfferId: string | null;
-  cheapestDeliveredCaveat: string | null;
+  /** Why a cheaper-looking offer was not crowned. Empty when there is nothing to explain. */
+  cheapestDeliveredCaveats: DeliveredCaveat[];
   storesShippingToDestination: number;
   offersWithUnknownShipping: number;
   offersNotShippingToDestination: number;
   offersBlockedByExchangeRate: number;
 }
 
+const SKIP_REASON: Record<
+  Extract<DeliveredCaveat, { kind: 'cheaper-offer-skipped' }>['reason'],
+  string
+> = {
+  'not-purchasable': 'it is not currently available to buy',
+  'stale-rate': 'its exchange rate is too old to rely on',
+};
+
+/** One caveat as a sentence, in the destination's locale and display currency. */
+export function formatDeliveredCaveat(
+  caveat: DeliveredCaveat,
+  currency: Currency,
+  locale: string = DEFAULT_LOCALE,
+): string {
+  switch (caveat.kind) {
+    case 'cheaper-offer-skipped': {
+      const amount = formatMoney(
+        toMajor({ minorUnits: caveat.amountMinorUnits, currency }),
+        currency,
+        locale,
+      );
+      return `A cheaper delivered total of ${amount} is listed at ${caveat.storeName}, but ${SKIP_REASON[caveat.reason]}.`;
+    }
+    case 'unknown-shipping': {
+      const one = caveat.count === 1;
+      return `${String(caveat.count)} ${one ? 'offer does' : 'offers do'} not publish a delivery cost, so ${one ? 'its' : 'their'} delivered total cannot be compared.`;
+    }
+    case 'not-shipping':
+      return `${String(caveat.count)} ${caveat.count === 1 ? 'store does' : 'stores do'} not ship to this destination.`;
+  }
+}
+
 /**
- * Format minor units for prose. Only ever used inside caveat sentences, where a
- * plain decimal is clearer than a locale-formatted string that would have to
- * carry a currency symbol the sentence already names.
+ * Every caveat as one paragraph, or null when the comparison needs no qualifying.
  */
-function describeAmount(minorUnits: number): string {
-  return (minorUnits / 100).toFixed(2);
+export function formatDeliveredCaveats(
+  caveats: readonly DeliveredCaveat[],
+  currency: Currency,
+  locale: string = DEFAULT_LOCALE,
+): string | null {
+  if (caveats.length === 0) return null;
+  return caveats.map((caveat) => formatDeliveredCaveat(caveat, currency, locale)).join(' ');
 }
 
 /**
@@ -148,7 +210,7 @@ export function compareDeliveredOffers(
     highestDeliveredMinorUnits: null,
     lowestListedMinorUnits: null,
     cheapestDeliveredOfferId: null,
-    cheapestDeliveredCaveat: null,
+    cheapestDeliveredCaveats: [],
     storesShippingToDestination: 0,
     offersWithUnknownShipping: 0,
     offersNotShippingToDestination: 0,
@@ -190,31 +252,26 @@ export function compareDeliveredOffers(
     null,
   );
 
-  const notes: string[] = [];
+  const caveats: DeliveredCaveat[] = [];
 
   if (winner && lowestDelivered != null && winner.deliveredMinorUnits > lowestDelivered) {
     const cheaper = withDelivered.find((offer) => offer.deliveredMinorUnits === lowestDelivered);
     if (cheaper) {
-      const reason = !PURCHASABLE.has(cheaper.availability)
-        ? 'it is not currently available to buy'
-        : 'its exchange rate is too old to rely on';
-      notes.push(
-        `A cheaper delivered total of ${describeAmount(cheaper.deliveredMinorUnits)} is listed at ${cheaper.storeName}, but ${reason}.`,
-      );
+      caveats.push({
+        kind: 'cheaper-offer-skipped',
+        amountMinorUnits: cheaper.deliveredMinorUnits,
+        storeName: cheaper.storeName,
+        reason: PURCHASABLE.has(cheaper.availability) ? 'stale-rate' : 'not-purchasable',
+      });
     }
   }
 
   if (unknownShipping > 0) {
-    const plural = unknownShipping === 1;
-    notes.push(
-      `${unknownShipping} ${plural ? 'offer does' : 'offers do'} not publish a delivery cost, so ${plural ? 'its' : 'their'} delivered total cannot be compared.`,
-    );
+    caveats.push({ kind: 'unknown-shipping', count: unknownShipping });
   }
 
   if (notShipping > 0) {
-    notes.push(
-      `${notShipping} ${notShipping === 1 ? 'store does' : 'stores do'} not ship to this destination.`,
-    );
+    caveats.push({ kind: 'not-shipping', count: notShipping });
   }
 
   return {
@@ -222,7 +279,7 @@ export function compareDeliveredOffers(
     highestDeliveredMinorUnits: highestDelivered,
     lowestListedMinorUnits: lowestListed,
     cheapestDeliveredOfferId: winner?.id ?? null,
-    cheapestDeliveredCaveat: notes.length > 0 ? notes.join(' ') : null,
+    cheapestDeliveredCaveats: caveats,
     storesShippingToDestination: shippable.length,
     offersWithUnknownShipping: unknownShipping,
     offersNotShippingToDestination: notShipping,

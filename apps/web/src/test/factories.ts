@@ -510,7 +510,7 @@ export function makeDeliveredComparison(
     highestDeliveredPrice: makeMoneyAmount(329),
     lowestListedPrice: makeMoneyAmount(299),
     cheapestDeliveredOfferId: 'offer-1',
-    cheapestDeliveredCaveat: null,
+    cheapestDeliveredCaveats: [],
     storesShippingToDestination: 2,
     offersWithUnknownShipping: 0,
     offersNotShippingToDestination: 0,

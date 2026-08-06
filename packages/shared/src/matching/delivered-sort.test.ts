@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import { formatMoney } from '../utils/format';
 import {
   DELIVERED_SORT_OPTIONS,
   compareDeliveredOffers,
+  formatDeliveredCaveats,
   listedAndDeliveredDisagree,
   sortDeliveredOffers,
+  type DeliveredComparisonResult,
   type DeliveredSortableOffer,
 } from './delivered-sort';
+
+/**
+ * The caveats as the UI shows them. The comparison returns structured data so
+ * the amount can be written in the destination's locale; these tests assert the
+ * sentence a Finnish reader actually sees.
+ */
+function caveatText(result: DeliveredComparisonResult): string | null {
+  return formatDeliveredCaveats(result.cheapestDeliveredCaveats, 'EUR', 'fi-FI');
+}
 
 function offer(overrides: Partial<DeliveredSortableOffer> = {}): DeliveredSortableOffer {
   return {
@@ -134,12 +146,14 @@ describe('compareDeliveredOffers', () => {
   it('counts and explains offers with unpublished shipping rather than dropping them', () => {
     const result = compareDeliveredOffers(QUARTET);
     expect(result.offersWithUnknownShipping).toBe(1);
-    expect(result.cheapestDeliveredCaveat).toMatch(/does not publish a delivery cost/i);
+    expect(result.cheapestDeliveredCaveats).toContainEqual({ kind: 'unknown-shipping', count: 1 });
+    expect(caveatText(result)).toMatch(/does not publish a delivery cost/i);
   });
 
   it('says how many stores cannot reach the destination', () => {
     const result = compareDeliveredOffers(QUARTET);
-    expect(result.cheapestDeliveredCaveat).toMatch(/1 store does not ship to this destination/i);
+    expect(result.cheapestDeliveredCaveats).toContainEqual({ kind: 'not-shipping', count: 1 });
+    expect(caveatText(result)).toMatch(/1 store does not ship to this destination/i);
   });
 
   it('never treats an unknown delivered total as free', () => {
@@ -156,7 +170,13 @@ describe('compareDeliveredOffers', () => {
       offer({ id: 'dearer-in-stock', deliveredMinorUnits: 25000 }),
     ]);
     expect(result.cheapestDeliveredOfferId).toBe('dearer-in-stock');
-    expect(result.cheapestDeliveredCaveat).toMatch(/not currently available to buy/i);
+    expect(result.cheapestDeliveredCaveats).toContainEqual({
+      kind: 'cheaper-offer-skipped',
+      amountMinorUnits: 20000,
+      storeName: 'Test Store',
+      reason: 'not-purchasable',
+    });
+    expect(caveatText(result)).toMatch(/not currently available to buy/i);
     // The cheaper total is still reported — it is real, just not actionable.
     expect(result.lowestDeliveredMinorUnits).toBe(20000);
   });
@@ -168,7 +188,13 @@ describe('compareDeliveredOffers', () => {
     ]);
     expect(result.cheapestDeliveredOfferId).toBe('fresh-dearer');
     expect(result.offersBlockedByExchangeRate).toBe(1);
-    expect(result.cheapestDeliveredCaveat).toMatch(/exchange rate is too old/i);
+    expect(result.cheapestDeliveredCaveats).toContainEqual({
+      kind: 'cheaper-offer-skipped',
+      amountMinorUnits: 20000,
+      storeName: 'Test Store',
+      reason: 'stale-rate',
+    });
+    expect(caveatText(result)).toMatch(/exchange rate is too old/i);
   });
 
   it('shows a stale-rate total rather than hiding it', () => {
@@ -200,7 +226,8 @@ describe('compareDeliveredOffers', () => {
     const result = compareDeliveredOffers([]);
     expect(result.cheapestDeliveredOfferId).toBeNull();
     expect(result.lowestDeliveredMinorUnits).toBeNull();
-    expect(result.cheapestDeliveredCaveat).toBeNull();
+    expect(result.cheapestDeliveredCaveats).toEqual([]);
+    expect(caveatText(result)).toBeNull();
   });
 
   it('has no caveat when every offer is comparable and buyable', () => {
@@ -208,7 +235,28 @@ describe('compareDeliveredOffers', () => {
       offer({ id: 'a', deliveredMinorUnits: 10000 }),
       offer({ id: 'b', deliveredMinorUnits: 12000 }),
     ]);
-    expect(result.cheapestDeliveredCaveat).toBeNull();
+    expect(result.cheapestDeliveredCaveats).toEqual([]);
+    expect(caveatText(result)).toBeNull();
+  });
+
+  /**
+   * The caveat is data, not prose, precisely so this holds: the same amount
+   * reads identically in the note and in the table cell beside it. It used to
+   * read `265.90` next to `265,90 €`.
+   */
+  it('writes the skipped amount in the destination locale and display currency', () => {
+    const result = compareDeliveredOffers([
+      offer({ id: 'cheap-oos', deliveredMinorUnits: 26590, availability: 'OUT_OF_STOCK' }),
+      offer({ id: 'dearer-in-stock', deliveredMinorUnits: 29190 }),
+    ]);
+
+    const finnish = formatDeliveredCaveats(result.cheapestDeliveredCaveats, 'EUR', 'fi-FI');
+    expect(finnish).toContain(formatMoney(265.9, 'EUR', 'fi-FI'));
+    expect(finnish).not.toContain('265.90');
+
+    // A different destination writes the same amount its own way.
+    const german = formatDeliveredCaveats(result.cheapestDeliveredCaveats, 'EUR', 'de-DE');
+    expect(german).toContain(formatMoney(265.9, 'EUR', 'de-DE'));
   });
 
   it('excludes non-shipping offers from the delivered range entirely', () => {

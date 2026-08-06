@@ -1,3 +1,4 @@
+import { formatMoney } from '@deal-finder/shared';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { SM_BREAKPOINT_QUERY } from '../../lib/use-media-query';
@@ -316,6 +317,79 @@ describe('offers that cannot reach the destination', () => {
     const row = rows.find((candidate) => within(candidate).queryByText('Maison Numérique SAS'));
     expect(row).toBeDefined();
     expect(within(row!).queryByText('Cheapest delivered total')).toBeNull();
+  });
+});
+
+/**
+ * The caveat and the cell it refers to are the same number, so they must be the
+ * same string. They were not: the sentence arrived from the API pre-formatted as
+ * `265.90` and sat beside a table cell reading `265,90 €`, which looks like two
+ * different prices to anyone not reading closely.
+ */
+describe('caveat formatting matches the table', () => {
+  const skipped = makeDestinationOffer({
+    id: 'offer-adriatica',
+    store: {
+      id: 'store-adriatica',
+      slug: 'adriatica-tech',
+      name: 'Adriatica Tech S.r.l.',
+      websiteUrl: 'https://adriatica.test',
+      logoUrl: null,
+      isActive: true,
+    },
+    isDemoStore: true,
+    delivery: makeDelivery({
+      sourceCountry: 'IT',
+      sourceCountryName: 'Italy',
+      shippingPrice: makeMoneyAmount(0),
+      totalDeliveredPrice: makeMoneyAmount(265.9),
+      availability: 'OUT_OF_STOCK',
+    }),
+  });
+
+  const comparison = makeDeliveredComparison({
+    cheapestDeliveredOfferId: 'offer-techhalle',
+    lowestDeliveredPrice: makeMoneyAmount(265.9),
+    highestDeliveredPrice: makeMoneyAmount(311.9),
+    storesShippingToDestination: 2,
+    cheapestDeliveredCaveats: [
+      {
+        kind: 'cheaper-offer-skipped',
+        amountMinorUnits: 26590,
+        storeName: 'Adriatica Tech S.r.l.',
+        reason: 'not-purchasable',
+      },
+    ],
+  });
+
+  it('writes a Finland / EUR caveat in the same localized currency format as the cell', () => {
+    atDesktop();
+    renderTable({ offers: [techhalle, skipped], comparison });
+
+    const rows = screen.getAllByRole('row');
+    const row = rows.find((candidate) => within(candidate).queryByText('Adriatica Tech S.r.l.'));
+    const cell = within(row!).getByTestId('delivered-price').textContent ?? '';
+
+    // Finnish decimal comma, and the separator before the symbol is whatever
+    // `Intl` produced — a literal here would be a second money formatter.
+    expect(cell.trim()).toBe(formatMoney(265.9, 'EUR', 'fi-FI'));
+    expect(cell).toMatch(/265,90/);
+
+    const caveat = screen.getByTestId('delivered-caveat').textContent ?? '';
+    expect(caveat).toContain(cell.trim());
+    expect(caveat).not.toContain('265.90');
+    expect(caveat).toContain('Adriatica Tech S.r.l.');
+    expect(caveat).toContain('not currently available to buy');
+  });
+
+  it('says nothing when the comparison needs no qualifying', () => {
+    atDesktop();
+    renderTable({
+      offers: [techhalle, gigantti],
+      comparison: makeDeliveredComparison({ cheapestDeliveredOfferId: 'offer-techhalle' }),
+    });
+
+    expect(screen.queryByTestId('delivered-caveat')).toBeNull();
   });
 });
 

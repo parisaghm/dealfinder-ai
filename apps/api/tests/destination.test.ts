@@ -4,6 +4,7 @@ import {
   dealsQuerySchema,
   dealsResponseSchema,
   deliveredHistoryResponseSchema,
+  formatDeliveredCaveats,
   priceHistoryResponseSchema,
   productOffersResponseSchema,
   storesResponseSchema,
@@ -732,7 +733,14 @@ describe('GET /api/products/:id/offers', () => {
 
     expect(body.comparison.cheapestDeliveredOfferId).not.toBe(seOfferId);
     expect(body.comparison.offersWithUnknownShipping).toBe(1);
-    expect(body.comparison.cheapestDeliveredCaveat).toContain('delivery cost');
+    // The caveat travels as data; the sentence is written where the locale is known.
+    expect(body.comparison.cheapestDeliveredCaveats).toContainEqual({
+      kind: 'unknown-shipping',
+      count: 1,
+    });
+    expect(formatDeliveredCaveats(body.comparison.cheapestDeliveredCaveats, 'EUR')).toContain(
+      'delivery cost',
+    );
   });
 
   it('lists a store that cannot deliver here separately, rather than omitting it', async () => {
