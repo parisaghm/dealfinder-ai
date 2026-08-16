@@ -28,6 +28,8 @@ export interface CreatePrismaClientOptions {
   logQueries?: boolean;
   /** Upper bound on the connection pool. See DEFAULT_MAX_CONNECTIONS. */
   maxConnections?: number;
+  /** How long an unused connection is kept. See DEFAULT_IDLE_TIMEOUT_MS. */
+  idleTimeoutMillis?: number;
 }
 
 /**
@@ -46,15 +48,28 @@ export interface CreatePrismaClientOptions {
  */
 export const DEFAULT_MAX_CONNECTIONS = 1;
 
+/**
+ * How long an unused connection is kept before it is dropped.
+ *
+ * Two seconds by default, and deliberately short: with the one-connection dev
+ * database this is what lets another tool (`db:seed`, the test suite, Prisma
+ * Studio) connect while the API is running, instead of waiting out
+ * node-postgres' 10-second default.
+ *
+ * The cost is that the API reconnects on any request that arrives more than two
+ * seconds after the last one, and reconnecting to the PGlite socket bridge is
+ * occasionally slow enough to exhaust `connectionTimeoutMillis` — which surfaces
+ * as an intermittent 500 on a perfectly good query. When nothing else needs the
+ * database (an end-to-end run, docker-compose, production), raise this with
+ * `DATABASE_IDLE_TIMEOUT_MS` so the connection is simply kept.
+ */
+export const DEFAULT_IDLE_TIMEOUT_MS = 2_000;
+
 export function createPrismaClient(options: CreatePrismaClientOptions): PrismaClient {
   const adapter = new PrismaPg({
     connectionString: options.connectionString,
     max: options.maxConnections ?? DEFAULT_MAX_CONNECTIONS,
-    // Release the connection quickly when idle. With the one-connection dev
-    // database this is what lets another tool (`db:seed`, the test suite,
-    // Prisma Studio) connect while the API is running, instead of waiting out
-    // node-postgres' 10-second default.
-    idleTimeoutMillis: 2_000,
+    idleTimeoutMillis: options.idleTimeoutMillis ?? DEFAULT_IDLE_TIMEOUT_MS,
     connectionTimeoutMillis: 10_000,
   });
 
@@ -91,12 +106,17 @@ export function getPrismaClient(): PrismaClient {
   }
 
   const configuredMax = Number.parseInt(process.env.DATABASE_POOL_MAX ?? '', 10);
+  const configuredIdle = Number.parseInt(process.env.DATABASE_IDLE_TIMEOUT_MS ?? '', 10);
 
   cached = createPrismaClient({
     connectionString,
     logQueries: process.env.PRISMA_LOG_QUERIES === 'true',
     maxConnections:
       Number.isInteger(configuredMax) && configuredMax > 0 ? configuredMax : DEFAULT_MAX_CONNECTIONS,
+    idleTimeoutMillis:
+      Number.isInteger(configuredIdle) && configuredIdle > 0
+        ? configuredIdle
+        : DEFAULT_IDLE_TIMEOUT_MS,
   });
   return cached;
 }

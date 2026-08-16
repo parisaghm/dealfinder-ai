@@ -243,7 +243,46 @@ beforeAll(async () => {
     productPrice: 289,
     shippingPrice: 0,
   });
+
+  await recordFreshRates();
 });
+
+/**
+ * A current SEK and DKK rate, for the tests that go through HTTP.
+ *
+ * The service-level cases above inject their own `RateContext` and are immune to
+ * the clock. The route cases cannot: `/api/products/:id/offers` resolves rates
+ * from the database, so whether a converted offer may be crowned depends on how
+ * long ago the shared development database happened to be seeded. Once the
+ * seeded rates pass `FX_RATE_MAX_AGE_HOURS` — 48 by default, and a database
+ * seeded a fortnight ago is well past it — the Danish offer is correctly barred
+ * from winning and a test about *crowning* starts failing for a reason that has
+ * nothing to do with the code it covers.
+ *
+ * So the fixture states its own precondition instead of inheriting one. The rows
+ * are stamped now, removed in `afterAll`, and carry the same rates the seed uses,
+ * so nothing else observes a different exchange rate while they exist.
+ */
+const RATE_STAMP = new Date();
+
+async function recordFreshRates(): Promise<void> {
+  for (const [baseCurrency, rate] of [
+    ['SEK', SEK_TO_EUR],
+    ['DKK', DKK_TO_EUR],
+  ] as const) {
+    await prisma.exchangeRate.upsert({
+      where: {
+        baseCurrency_quoteCurrency_fetchedAt: {
+          baseCurrency,
+          quoteCurrency: 'EUR',
+          fetchedAt: RATE_STAMP,
+        },
+      },
+      create: { baseCurrency, quoteCurrency: 'EUR', rate, fetchedAt: RATE_STAMP, source: 'static' },
+      update: { rate },
+    });
+  }
+}
 
 async function createProductInStore(
   storeId: string,
@@ -276,6 +315,9 @@ afterAll(async () => {
   await context.cleanup();
   await prisma.store.deleteMany({ where: { id: { in: extraStoreIds } } });
   extraStoreIds = [];
+  // Only the rows this file added: `fetchedAt` is part of the key, and the
+  // seeded observations carry their own day-truncated timestamps.
+  await prisma.exchangeRate.deleteMany({ where: { fetchedAt: RATE_STAMP } });
 });
 
 // ── GET /api/countries ──────────────────────────────────────────────────────

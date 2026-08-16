@@ -348,7 +348,18 @@ export function WatchlistProductGroup({
             countryOptions={countries}
             pending={pending}
             onCancel={() => setAdding(false)}
-            onSubmit={(input) => onAddTarget(input)}
+            onSubmit={(input) => {
+              onAddTarget(input);
+              /*
+                Closed on submit, not left open with the same values in it. A
+                filled form still sitting there after a target was added is a
+                second click away from a duplicate — the exact outcome the
+                separate-action design exists to prevent. If the server refuses
+                the target, the conflict box appears in its place and the button
+                is back.
+              */
+              setAdding(false);
+            }}
           />
         ) : (
           <Button

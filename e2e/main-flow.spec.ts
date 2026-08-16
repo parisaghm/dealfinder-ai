@@ -218,9 +218,15 @@ test('4, 5, 6 — track a product, set a target, update it, then remove it', asy
   await expect(row).toContainText('300');
 
   // ── 6a. Update the target inline ─────────────────────────────────────────
+  //
+  // The two locators below follow a rename, not a change of behaviour: a row can
+  // now hold a list-price target and a delivered-price target at once, so the
+  // field that used to be "Target price" says which price it means, and "Save"
+  // says which target it saves. What is typed, and what the row must then show,
+  // are exactly as before.
   await row.getByRole('button', { name: /edit target/i }).click();
-  await row.getByLabel('Target price').fill('250');
-  await row.getByRole('button', { name: /^save$/i }).click();
+  await row.getByLabel(/notify me when the list price is below/i).fill('250');
+  await row.getByRole('button', { name: /^save target$/i }).click();
   await expect(row).toContainText('250');
 
   // ── 6b. Pause and resume monitoring ──────────────────────────────────────

@@ -56,6 +56,19 @@ export default defineConfig({
       env: {
         RATE_LIMIT_MAX: '10000',
         MONITOR_ENABLED: 'false',
+        /**
+         * Keep the single dev connection instead of reconnecting between
+         * requests.
+         *
+         * The 2-second default exists so another tool can reach the database
+         * while the API is running; during an end-to-end run nothing else does,
+         * and the reconnect it forces on every request more than two seconds
+         * apart occasionally exceeds the connection timeout, surfacing as an
+         * intermittent 500 and a blank page. Raising it removes a source of
+         * flakiness rather than hiding one — the queries themselves are
+         * unchanged, and the API integration tests still run on the default.
+         */
+        DATABASE_IDLE_TIMEOUT_MS: '120000',
       },
     },
     {
