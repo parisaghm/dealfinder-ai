@@ -1,4 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
+import {
+  forgetTestWatchlistItem,
+  recordTestNotification,
+  recordTestWatchlistItem,
+  recordedTestNotifications,
+  recordedTestWatchlistItems,
+  removeRecordedTestNotifications,
+  removeRecordedWatchlistItems,
+} from './helpers/test-notifications';
+
+const API = 'http://127.0.0.1:4000';
+const DEMO_USER = 'demo@dealfinder.test';
 
 /**
  * The main user flow, end to end.
@@ -26,11 +38,90 @@ import { expect, test, type Page } from '@playwright/test';
  * clean up after themselves.
  */
 async function useDemoUser(page: Page) {
-  await page.setExtraHTTPHeaders({ 'x-user-email': 'demo@dealfinder.test' });
+  await page.setExtraHTTPHeaders({ 'x-user-email': DEMO_USER });
 }
 
 test.beforeEach(async ({ page }) => {
   await useDemoUser(page);
+});
+
+/**
+ * The test-alert journey persists a real `Notification` row against the seeded
+ * demo user, so this file cleans up after itself by id.
+ *
+ * `beforeAll` sweeps anything a *previous* run recorded and did not manage to
+ * delete — a run killed between the click and its `afterAll` would otherwise leak
+ * the row silently, and the leak only becomes visible much later as a drifting
+ * count. See `helpers/test-notifications.ts` for why this is by id rather than by
+ * `type: 'TEST'`.
+ */
+/**
+ * Best-effort on purpose.
+ *
+ * A failure to reach the database must not fail a suite that is otherwise green:
+ * the ids stay in the ledger, so the next run's `beforeAll` tries again, and
+ * `npm run db:check-test-fixtures` reports the row in the meantime. Cleanup that
+ * can turn a passing run red is a worse trade than cleanup that can be late.
+ */
+async function sweepRecordedNotifications(when: string): Promise<void> {
+  const outstanding = recordedTestNotifications();
+  if (outstanding.length === 0) return;
+
+  try {
+    const result = await removeRecordedTestNotifications(outstanding);
+    if (result.deleted.length > 0) {
+      console.log(
+        `[e2e ${when}] removed ${String(result.deleted.length)} test notification row(s): ${result.deleted.join(', ')}`,
+      );
+    }
+    if (result.refused.length > 0) {
+      console.warn(
+        `[e2e ${when}] left ${String(result.refused.length)} row(s) alone — not TEST notifications: ${result.refused.join(', ')}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[e2e ${when}] could not reach the database to clean up ${String(outstanding.length)} recorded row(s); ` +
+        `they stay in the ledger for the next run. ${String(error).slice(0, 140)}`,
+    );
+  }
+}
+
+/**
+ * The watchlist row the tracking journey creates.
+ *
+ * That test removes it through the UI as its final step — that *is* the
+ * behaviour under test and stays exactly as it was. This is the safety net for
+ * the run that fails earlier and never gets there, which is how the seeded six
+ * rows quietly became seven.
+ */
+async function sweepRecordedWatchlistItems(when: string): Promise<void> {
+  const outstanding = recordedTestWatchlistItems();
+  if (outstanding.length === 0) return;
+
+  try {
+    const result = await removeRecordedWatchlistItems(API, DEMO_USER, outstanding);
+    if (result.deleted.length > 0) {
+      console.log(
+        `[e2e ${when}] removed ${String(result.deleted.length)} watchlist row(s) a test did not get to: ${result.deleted.join(', ')}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[e2e ${when}] could not remove ${String(outstanding.length)} recorded watchlist row(s); ` +
+        `they stay in the ledger for the next run. ${String(error).slice(0, 140)}`,
+    );
+  }
+}
+
+test.beforeAll(async () => {
+  await sweepRecordedNotifications('beforeAll');
+  await sweepRecordedWatchlistItems('beforeAll');
+});
+
+test.afterAll(async () => {
+  await sweepRecordedNotifications('afterAll');
+  await sweepRecordedWatchlistItems('afterAll');
 });
 
 test('1 — search for a product from the home page', async ({ page }) => {
@@ -195,7 +286,17 @@ test('4, 5, 6 — track a product, set a target, update it, then remove it', asy
   // ── 5. Set a target price ────────────────────────────────────────────────
   const targetInput = page.getByLabel(/alert me when the price drops to/i);
   await targetInput.fill('300');
+
+  // Record the row before anything downstream can fail. The test removes it
+  // itself at step 6c — this only matters when the run does not get that far.
+  const created = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/watchlist') && response.request().method() === 'POST',
+  );
   await page.getByRole('button', { name: /track this price/i }).click();
+
+  const createdBody = (await (await created).json()) as { id?: unknown };
+  if (typeof createdBody.id === 'string') recordTestWatchlistItem(createdBody.id);
 
   // ── 4. It is now tracked ─────────────────────────────────────────────────
   await expect(page.getByRole('button', { name: /update target price/i })).toBeVisible();
@@ -240,6 +341,11 @@ test('4, 5, 6 — track a product, set a target, update it, then remove it', asy
   await expect(
     page.locator('li', { has: page.getByRole('heading', { name: productName }) }),
   ).toHaveCount(0);
+
+  // Removed through the UI, as the test intends, so the safety net has nothing
+  // left to do. Dropped from the ledger here rather than left for `afterAll` to
+  // discover as an already-deleted id.
+  if (typeof createdBody.id === 'string') forgetTestWatchlistItem(createdBody.id);
 });
 
 test('the dashboard summarises tracked products and alert activity', async ({ page }) => {
@@ -272,7 +378,23 @@ test('settings can be saved and a test alert sent', async ({ page }) => {
   await expect(page.getByText('Settings saved.')).toBeVisible();
 
   // Proves the notification path works end to end.
+  //
+  // The response carries the id of the row it just wrote, so the id is recorded
+  // before anything else can fail. Reading it from the response is what makes the
+  // cleanup exact: no guessing from a timestamp, no deleting by type.
+  const alertResponse = page.waitForResponse(
+    (response) => response.url().includes('/api/alerts/test') && response.request().method() === 'POST',
+  );
   await page.getByRole('button', { name: /send a test alert/i }).click();
+
+  const body = (await (await alertResponse).json()) as {
+    notification?: { id?: unknown; type?: unknown };
+  };
+  const notificationId = body.notification?.id;
+  expect(typeof notificationId, 'the test alert should report the row it created').toBe('string');
+  expect(body.notification?.type).toBe('TEST');
+  recordTestNotification(notificationId as string);
+
   await expect(page.getByText(/sent via/i)).toBeVisible({ timeout: 20_000 });
 
   // Restore the seeded default so re-runs start from the same state.

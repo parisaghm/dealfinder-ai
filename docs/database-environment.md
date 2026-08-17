@@ -155,6 +155,62 @@ Every recovery so far has preserved the data exactly: 10 stores, 115 products, 3
 offers, 23 548 offer-history rows, 10 320 price-history rows, 71 canonical
 products, 6 watchlist items and 12 exchange rates, with all nine invariants OK.
 
+### Recovering from an interrupted test run
+
+A suite killed mid-run never reaches its `afterAll`, so its fixtures stay behind.
+Nothing fails — the counts simply drift, and later they no longer match the
+documented baseline. Three commands, in order:
+
+```bash
+# 1. Restart the database, if it needs it
+npx prisma dev stop default
+npm run db:dev
+
+# 2. Confirm the data and the invariants
+npm run db:counts
+
+# 3. Detect fixtures the crashed run left behind
+npm run db:check-test-fixtures
+```
+
+`db:check-test-fixtures` is **read-only**. It exits `0` when the database holds
+only seeded and demo data, and non-zero with the exact ids when it does not:
+
+```
+Found 7 orphaned test-fixture row(s).
+
+Store  (normally removed by: createTestContext().cleanup())
+  cmsx07bsv0002w8wt8p0ps11u  test-store-verify99 "Test Store verify99" (1 product(s))
+Product  (normally removed by: createTestContext().cleanup())
+  cmsx07bxm0004w8wtvj4l5tmf  TestBrandverify99 · Test product p-verify99 · store=test-store-verify99
+…
+```
+
+It checks `Store`, `Product`, `CanonicalProduct`, `StoreOffer`,
+`StoreOfferPriceHistory`, `PriceHistory`, `ProductMatchCandidate`,
+`WatchlistItem`, `Notification`, `User` and `ExchangeRate`, using only the
+prefixes the fixtures themselves establish — `test-…` slugs, `TestBrand…` brands,
+`testbrand…` canonical keys, `test-<uuid8>@dealfinder.test` users, and exchange
+rates not stamped midnight UTC (the seed always truncates to the day).
+
+Two things it deliberately does not do:
+
+- **It never deletes.** Removing rows from a shared database on the strength of a
+  name pattern is how a cleanup script eventually eats real data. The report gives
+  you the ids; the removal is yours, and is auditable.
+- **It never treats demo data as a test fixture.** Seven of the ten stores are
+  synthetic, and *synthetic* is not *leaked*. Confusing the two would have this
+  command propose deleting most of the catalogue.
+
+Removing what it reports: delete the `Product` rows first (price history, offers,
+offer history, watchlist items, notifications and match candidates cascade from
+them), then the `CanonicalProduct`, then the `Store`, then the `User` — the order
+`createTestContext().cleanup()` uses, and for the same reason: a product still
+pointing at a canonical record blocks its delete.
+
+**Never `db:reset`.** It destroys the seeded catalogue the report is trying to
+protect.
+
 ### Reducing the chance of hitting it
 
 - **One database consumer at a time.** Do not run `npm test` and `npm run test:e2e`
@@ -165,6 +221,8 @@ products, 6 watchlist items and 12 exchange rates, with all nine invariants OK.
   rather than re-established hundreds of times.
 - **Do not seed to "fix" it.** A reseed is neither necessary nor sufficient; the
   three commands above are the fix.
+- **Run `db:check-test-fixtures` after any interrupted run**, so a leak is found
+  while its cause is still obvious rather than weeks later as a puzzling count.
 
 ### What not to do
 

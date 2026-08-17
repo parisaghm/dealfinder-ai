@@ -522,6 +522,7 @@ is rejected at startup instead of silently never firing.
 | `npm run db:deploy` / `db:diff` | Apply migrations / inspect pending SQL ([why not `db:migrate`](docs/database-environment.md)) |
 | `npm run db:seed` / `db:backfill-offers` / `db:match` / `db:studio` | Database tasks |
 | `npm run check:migrations` | Assert every migration is additive and safely ordered |
+| `npm run db:check-test-fixtures` | Read-only: report test fixtures a crashed run left behind ([recovery](docs/database-environment.md)) |
 | ~~`npm run db:reset`~~ | **Do not run.** Drops the schema; see [docs/database-environment.md](docs/database-environment.md) |
 | `npm test` | Unit + API + component suites |
 | `npm run test:e2e` | Playwright end-to-end |

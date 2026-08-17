@@ -18,7 +18,18 @@ export default defineConfig({
   workers: 1,
   retries: process.env.CI ? 2 : 0,
   timeout: 45_000,
-  expect: { timeout: 10_000 },
+  /**
+   * 15 seconds rather than 10.
+   *
+   * Every assertion is unchanged; only the patience is. The failures this fixes
+   * were the suite disbelieving correct behaviour: a watchlist edit that saved,
+   * invalidated and refetched in a little over ten seconds on a loaded machine
+   * reported as "expected 250, received 300" — a wrong-looking value that was
+   * simply the previous render. Assertions still fail promptly when the app is
+   * actually wrong, because a wrong value never becomes right no matter how long
+   * you wait, and the per-test timeout still bounds a genuinely stuck run.
+   */
+  expect: { timeout: 15_000 },
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
 
   use: {
@@ -35,7 +46,18 @@ export default defineConfig({
       command: 'npm run dev:api',
       url: 'http://127.0.0.1:4000/api/health',
       reuseExistingServer: true,
-      timeout: 60_000,
+      /**
+       * Longer than the 60-second default, because the readiness probe here is a
+       * *dependency-checked* health endpoint: it queries the database, and the
+       * first query against the local PGlite server after a heavy run — the API
+       * integration suite, say — can take tens of seconds on its own. Twice now a
+       * whole suite has reported "Timed out waiting from config.webServer" with a
+       * database that was demonstrably healthy seconds later.
+       *
+       * This waits longer for a real signal rather than accepting a weaker one:
+       * the probe still has to see the database up before a single test runs.
+       */
+      timeout: 120_000,
       stdout: 'ignore',
       stderr: 'pipe',
       /**
@@ -69,13 +91,25 @@ export default defineConfig({
          * unchanged, and the API integration tests still run on the default.
          */
         DATABASE_IDLE_TIMEOUT_MS: '120000',
+        /**
+         * Wait for the database rather than 500 at it.
+         *
+         * Under a full suite the PGlite server slows down enough that acquiring a
+         * connection exceeds node-postgres' 10-second default. The request then
+         * fails with a 500, the page renders empty, and the test reports
+         * "element(s) not found" — which reads as a broken selector and is
+         * nothing of the kind. Waiting longer surfaces the real result; the
+         * per-test timeout still bounds how long a genuinely stuck run can take.
+         */
+        DATABASE_CONNECT_TIMEOUT_MS: '30000',
       },
     },
     {
       command: 'npm run dev:web',
       url: 'http://localhost:5173',
       reuseExistingServer: true,
-      timeout: 60_000,
+      // Matched to the API's, so a slow machine fails both or neither.
+      timeout: 120_000,
       stdout: 'ignore',
       stderr: 'pipe',
     },

@@ -30,6 +30,8 @@ export interface CreatePrismaClientOptions {
   maxConnections?: number;
   /** How long an unused connection is kept. See DEFAULT_IDLE_TIMEOUT_MS. */
   idleTimeoutMillis?: number;
+  /** How long to wait for a connection. See DEFAULT_CONNECT_TIMEOUT_MS. */
+  connectionTimeoutMillis?: number;
 }
 
 /**
@@ -65,12 +67,25 @@ export const DEFAULT_MAX_CONNECTIONS = 1;
  */
 export const DEFAULT_IDLE_TIMEOUT_MS = 2_000;
 
+/**
+ * How long to wait for a connection from the pool before giving up.
+ *
+ * Ten seconds is node-postgres' own default and is generous for a healthy
+ * server. It is *not* always generous for the bundled PGlite one: under sustained
+ * load it slows down enough that acquisition exceeds this, and the request fails
+ * with a 500 that looks like a broken query rather than a busy database. Raise it
+ * with `DATABASE_CONNECT_TIMEOUT_MS` where waiting is better than failing — an
+ * end-to-end run, for instance, where the alternative is a blank page and a
+ * mystifying test failure.
+ */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+
 export function createPrismaClient(options: CreatePrismaClientOptions): PrismaClient {
   const adapter = new PrismaPg({
     connectionString: options.connectionString,
     max: options.maxConnections ?? DEFAULT_MAX_CONNECTIONS,
     idleTimeoutMillis: options.idleTimeoutMillis ?? DEFAULT_IDLE_TIMEOUT_MS,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: options.connectionTimeoutMillis ?? DEFAULT_CONNECT_TIMEOUT_MS,
   });
 
   return new PrismaClient({
@@ -107,6 +122,7 @@ export function getPrismaClient(): PrismaClient {
 
   const configuredMax = Number.parseInt(process.env.DATABASE_POOL_MAX ?? '', 10);
   const configuredIdle = Number.parseInt(process.env.DATABASE_IDLE_TIMEOUT_MS ?? '', 10);
+  const configuredConnect = Number.parseInt(process.env.DATABASE_CONNECT_TIMEOUT_MS ?? '', 10);
 
   cached = createPrismaClient({
     connectionString,
@@ -117,6 +133,10 @@ export function getPrismaClient(): PrismaClient {
       Number.isInteger(configuredIdle) && configuredIdle > 0
         ? configuredIdle
         : DEFAULT_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis:
+      Number.isInteger(configuredConnect) && configuredConnect > 0
+        ? configuredConnect
+        : DEFAULT_CONNECT_TIMEOUT_MS,
   });
   return cached;
 }
