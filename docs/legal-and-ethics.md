@@ -12,15 +12,43 @@ your jurisdiction.
 ## The short version
 
 1. **A permissive `robots.txt` is not permission.** This code checks and obeys
-   robots.txt; that does not make scraping lawful.
+   robots.txt where applicable; that does not make scraping lawful.
 2. **Terms of Service govern.** Many retailers explicitly prohibit automated
    access or price extraction. Read them. Where prohibited, do not proceed.
-3. **Prefer an official API, affiliate feed, or data licence.** All three MVP
-   stores are reachable through affiliate networks. That is the correct
-   production route, both legally and operationally.
+3. **Prefer an official API, affiliate feed, or data licence.** The three modelled
+   Finnish retailers are reachable through affiliate networks. That is the correct
+   production route, both legally and operationally. The full order of preference
+   is in [store-providers.md](store-providers.md#adding-a-real-store-the-integration-priority).
 4. **Never circumvent access controls.** No CAPTCHA solving, no bot-protection
-   evasion, no paywall or login-wall bypass, no user-agent spoofing. This
-   codebase contains no such capability and none should be added.
+   evasion, no paywall or login-wall bypass, no authentication bypass, no
+   user-agent spoofing. This codebase contains no such capability and none should
+   be added.
+5. **Live catalogue crawling stays disabled.** `searchProducts()` returns `[]` in
+   live mode by design, and that is an architectural position rather than an
+   unfinished feature.
+6. **Each retailer is reviewed individually.** "Europe-wide" describes the
+   destinations DealFinder can price for, not a claim to have indexed the
+   continent. Adding a retailer is a reviewed integration, one at a time.
+
+## The European expansion did not widen the collection surface
+
+Worth stating plainly, because "Europe-wide comparison" could easily be assumed to
+mean "a lot more scraping". It does not:
+
+- **The seven European stores are synthetic.** They are invented retailers with
+  invented catalogues, prices, delivery rules and price history — fixtures that
+  demonstrate destination-aware comparison without touching anyone's website.
+  They are labelled `isDemoStore` in the database and disclosed in the UI wherever
+  an offer appears.
+- **No new network access was added.** The expansion added a database layer
+  (`StoreOffer`), arithmetic (integer minor units, FX conversion) and UI. The
+  collection code is the same code, with the same guardrails.
+- **Adding a real European retailer is a separate, reviewed decision** for each
+  one: its terms, its permitted source, its delivery rules, its VAT treatment.
+  Nothing here pre-authorises it.
+
+A synthetic store must never read as a real one, and a real one must never read as
+synthetic. Both directions are honesty requirements.
 
 ## Legal frameworks that apply in the EU/Finland
 
@@ -51,6 +79,8 @@ These are enforced in code, not merely documented:
 | Commitment | Where |
 |---|---|
 | Live collection off unless explicitly enabled | `PROVIDER_MODE=mock` default; live adapters are behind a dynamic import that is never reached otherwise |
+| No authentication or bot-protection bypass anywhere in the codebase | There is no credential store, no cookie persistence, no CAPTCHA handling and no challenge solver. A page behind a login is simply not readable by this system |
+| Demo stores cannot be mistaken for real ones | `isDemoStore` flows from the dataset to the `Store` row to the DTO to visible text, with a footnote defining "Demo store" wherever offers are tabulated |
 | robots.txt fetched, parsed, obeyed; **fails closed** on a disallow | [`live/robots.ts`](../packages/store-providers/src/live/robots.ts) — `assertCrawlAllowed()` runs before every fetch and throws `ProviderBlockedError` |
 | `Crawl-delay` honoured | Parsed from robots.txt and raises the per-store request interval |
 | Honest user-agent, with contact URL | `USER_AGENT` in [`fetch-with-timeout.ts`](../packages/store-providers/src/http/fetch-with-timeout.ts) — never a spoofed browser string |
@@ -85,6 +115,23 @@ to do, not an unfinished feature.
   last checked, and links out to the store to confirm.
 - **Do not present heuristics as advice.** The deal score is labelled an
   automated heuristic, with its confidence and its reasoning shown.
+- **Never describe an estimate as a guarantee.** This is the constraint the whole
+  delivered-price feature is built around, because a total is assembled from
+  several things that can each be out of date or unpublished:
+
+  | If this is unknown or unreliable | The product must say so, and must not | 
+  |---|---|
+  | Delivery cost is unpublished | Show a delivered total at all, or imply free delivery |
+  | The exchange rate is stale | Present the offer as the cheapest, or fire an alert on it |
+  | The exchange rate is missing | Convert, or compare the offer |
+  | Tax treatment is unpublished | Call the total final |
+  | The route can attract duty | Omit the warning, or fold a guessed figure into the total |
+  | Delivery time is unpublished | Leave the field blank, which reads as "fast" |
+
+  Prices, availability, delivery costs, VAT treatment, exchange rates and delivery
+  conditions all change between our observation and the user's checkout. Every
+  delivered total is an estimate and is labelled as one; the user is always sent to
+  the retailer's own page to confirm.
 - **Attribute and link.** Every product links to the store's own page. The point
   is to send the user there, not to substitute for it.
 - **Respond to objections.** Publish contact details in the user-agent and honour

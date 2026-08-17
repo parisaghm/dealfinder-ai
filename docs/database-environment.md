@@ -80,6 +80,100 @@ the test suite **or** a backfill — never two at once. A second connection is r
 with `ECONNRESET`, and confusingly a trivial health-check query still succeeds
 while every real query fails.
 
+### `DATABASE_IDLE_TIMEOUT_MS`
+
+How long the pool keeps an unused connection. **Default 2 000 ms**, deliberately
+short: with one connection available, releasing it quickly is what lets another
+tool (`db:seed`, the test suite, Prisma Studio, `db:counts`) connect while the API
+is running, instead of waiting out node-postgres' 10-second default.
+
+The cost is a reconnect on any request arriving more than two seconds after the
+last one. Reconnecting to the socket bridge is normally instant, but under load it
+is occasionally slow enough to exhaust `connectionTimeoutMillis` (10 s), which
+surfaces as an **intermittent 500 on a perfectly good query** — and, in a browser,
+as a blank page.
+
+So raise it whenever nothing else needs the database:
+
+```bash
+DATABASE_IDLE_TIMEOUT_MS=120000   # keep the connection instead of reconnecting
+```
+
+`playwright.config.ts` sets exactly that for the API it starts, which is why the
+end-to-end suite is stable. The API integration tests deliberately run on the
+default, so the short-timeout path stays exercised.
+
+---
+
+## Memory fragility under long runs
+
+**Known limitation.** The local Prisma/PGlite development database becomes
+unreliable during long test or end-to-end workloads. It has been observed to drop
+its connection or disappear entirely part-way through a session, with symptoms
+including:
+
+```
+prisma:error Connection terminated unexpectedly
+Error: Can't reach database server at 127.0.0.1:51214   (code P1001)
+DriverAdapterError: DatabaseNotReachable
+```
+
+Downstream, the same failure looks like:
+
+- a whole vitest project failing at *suite* level rather than on assertions;
+- an API request taking ~10 s and returning 500;
+- `webServer` timing out in Playwright, because the API's health check cannot
+  reach the database;
+- a page that renders its shell with an empty `<main>`.
+
+None of this indicates data loss, and none of it is a reason to reset anything.
+
+### Verified recovery procedure
+
+Run these three, in order, and nothing else concurrently:
+
+```bash
+npx prisma dev stop default     # stop the (possibly wedged) server
+npm run db:dev                  # start it again, detached
+npm run db:counts               # confirm the data and every invariant
+```
+
+Notes from having done this several times:
+
+- `prisma dev stop default` may report **"No prisma dev servers found to stop"**.
+  That is fine — it means the process had already gone.
+- `npm run db:dev` occasionally prints the connection string without the server
+  actually staying up. Check with `npm run db:counts`, or look for a listener on
+  port 51214; if there is none, run `db:dev` again.
+- `db:counts` is the acceptance test, not the connection string. It reports every
+  table count plus nine invariants, so it distinguishes "reachable" from "intact".
+- `prisma dev status` fails with `No such built-in module: node:sqlite` unless
+  `NODE_OPTIONS=--experimental-sqlite` is set; the `db:dev` script passes it, that
+  subcommand does not. Use `db:counts` instead.
+
+Every recovery so far has preserved the data exactly: 10 stores, 115 products, 319
+offers, 23 548 offer-history rows, 10 320 price-history rows, 71 canonical
+products, 6 watchlist items and 12 exchange rates, with all nine invariants OK.
+
+### Reducing the chance of hitting it
+
+- **One database consumer at a time.** Do not run `npm test` and `npm run test:e2e`
+  together, and do not seed while either is running.
+- **Run the heavy suites separately.** `npm test -w @deal-finder/api` and
+  `npm run test:e2e` are the two that stress it.
+- **Raise `DATABASE_IDLE_TIMEOUT_MS`** for long runs, so the connection is held
+  rather than re-established hundreds of times.
+- **Do not seed to "fix" it.** A reseed is neither necessary nor sufficient; the
+  three commands above are the fix.
+
+### What not to do
+
+**Never use `db:reset` as a recovery step.** It calls
+`prisma migrate reset --force`, which drops and recreates the schema — it destroys
+the data that the recovery procedure above preserves, and against `template1` the
+consequences are worse than usual. The same applies to `prisma migrate reset` and
+`prisma db push --force-reset` in any form.
+
 ---
 
 ## Migration safety guard

@@ -59,8 +59,8 @@ score is below 70  →  Price increased
 **Why the 0.5% floor:** real retail prices wobble by fractions of a percent
 between checks. Calling a €0.30 movement on a €1,199 laptop a "price increase" is
 technically true and practically useless. Early on, this exact bug labelled 8 of
-42 seeded products "Price increased" purely from noise. The same threshold is
-used for trend detection, so the two agree.
+the 42 products the seed contained at the time "Price increased" purely from
+noise. The same threshold is used for trend detection, so the two agree.
 
 **Why a strong deal overrides the rise:** a product that jumped €1 from an
 all-time low is still an excellent price. The override applies only when the deal
