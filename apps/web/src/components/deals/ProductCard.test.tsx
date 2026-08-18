@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { makeDealQuality, makeProduct } from '../../test/factories';
+import { makeDealQuality, makeLiveProduct, makeProduct } from '../../test/factories';
 import { ProductCard } from './ProductCard';
 
 const renderCard = (props: Parameters<typeof ProductCard>[0]) =>
@@ -27,15 +27,16 @@ describe('ProductCard', () => {
     expect(screen.getByText(/in stock/i)).toBeInTheDocument();
     expect(screen.getByText(/free delivery/i)).toBeInTheDocument();
     expect(screen.getByText(/checked/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /view deal/i })).toBeInTheDocument();
+    // The default fixture is sample data, so the CTA stays inside the app.
+    expect(screen.getByRole('link', { name: /view demo details/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /track price/i })).toBeInTheDocument();
   });
 
-  it('links to the store as a real external link', () => {
-    renderCard({ product: makeProduct(), onTrack: vi.fn() });
+  it('links to the store as a real external link, when the offer is a real one', () => {
+    renderCard({ product: makeLiveProduct(), onTrack: vi.fn() });
 
     const link = screen.getByRole('link', { name: /view deal/i });
-    expect(link).toHaveAttribute('href', 'https://store.test/p/ext-1');
+    expect(link).toHaveAttribute('href', 'https://www.gigantti.fi/product/sony-wh-1000xm5');
     expect(link).toHaveAttribute('target', '_blank');
     // noreferrer keeps our URL out of the store's referrer logs.
     expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));

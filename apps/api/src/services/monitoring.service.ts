@@ -238,6 +238,11 @@ export async function runPriceCheck(
             : {}),
           ...(observation.availability ? { availability: observation.availability } : {}),
           discountPercent: calculateDiscountPercent(newPrice, originalPrice),
+          // `dataSourceType` is deliberately not touched. A re-check observes a
+          // price; it does not re-derive `productUrl`, so it cannot upgrade a
+          // fabricated URL into one that is safe to open. Leaving the column alone
+          // means a seeded mock listing stays `mock` — fail-closed, which is the
+          // direction this column exists to fail in.
           lastCheckedAt: currentTime,
         },
       });

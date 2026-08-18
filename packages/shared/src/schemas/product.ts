@@ -37,6 +37,16 @@ export const productSummarySchema = z.object({
   vertical: z.string().max(64),
   imageUrl: z.string().max(2048).nullable(),
   productUrl: z.string().max(2048),
+  /**
+   * Where this listing's data came from, and therefore whether `productUrl` above
+   * may be offered as an external link.
+   *
+   * A different question from whether the store is real: `store.name` can be a
+   * genuine retailer while the price, availability and URL beside it are sample
+   * data. Pass it to `canOpenExternalDeal` rather than interpreting it in a
+   * component.
+   */
+  dataSourceType: z.string().max(32),
   store: storeSummarySchema,
 
   currency: currencySchema,

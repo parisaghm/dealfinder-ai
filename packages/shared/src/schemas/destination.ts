@@ -167,6 +167,22 @@ export const destinationOfferSchema = z.object({
   id: idSchema,
   productId: idSchema,
   store: storeSummarySchema,
+  /**
+   * The listing's own URL.
+   *
+   * Carried so a row can link to the product rather than the retailer's front
+   * page, which is what it fell back to before this field existed, and so
+   * `canOpenExternalDeal` has a URL to judge at all.
+   */
+  productUrl: z.string().max(2048),
+  /**
+   * Where this quote's data came from. Gates the external link.
+   *
+   * Distinct from `isDemoStore` below: that says the retailer is invented, this
+   * says the numbers are. A real shop can carry a sample offer, and only this
+   * field can express it.
+   */
+  dataSourceType: z.string().max(32),
   /** Fictional demo retailer, so the UI can say so. */
   isDemoStore: z.boolean(),
   delivery: deliveryToDestinationSchema,

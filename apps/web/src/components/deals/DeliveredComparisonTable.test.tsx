@@ -1,6 +1,7 @@
 import { formatMoney } from '@deal-finder/shared';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { SM_BREAKPOINT_QUERY } from '../../lib/use-media-query';
 import {
   makeDelivery,
@@ -100,15 +101,19 @@ const COMPARISON = makeDeliveredComparison({
   offersWithUnknownShipping: 1,
 });
 
+// A router is required now: a sample offer's CTA is an internal link to the
+// product page rather than an external anchor to a listing that does not exist.
 function renderTable(props: Partial<Parameters<typeof DeliveredComparisonTable>[0]> = {}) {
   return render(
-    <DeliveredComparisonTable
-      offers={OFFERS}
-      comparison={COMPARISON}
-      country="FI"
-      currency="EUR"
-      {...props}
-    />,
+    <MemoryRouter>
+      <DeliveredComparisonTable
+        offers={OFFERS}
+        comparison={COMPARISON}
+        country="FI"
+        currency="EUR"
+        {...props}
+      />
+    </MemoryRouter>,
   );
 }
 

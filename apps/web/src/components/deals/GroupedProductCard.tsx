@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { destinationPath } from '../../lib/destination';
 import { DealQualityBadge } from './DealQualityBadge';
+import { DemoOfferNotice } from './DealCta';
 import { DemoStoreNotice } from './DeliveryDetails';
 
 /**
@@ -171,6 +172,20 @@ export function GroupedProductCard({
           )}
 
           {destination?.hasDemoStore && <DemoStoreNotice compact />}
+
+          {/*
+            Independent of `destination`. `hasDemoStore` only arrives with a
+            destination selected and only reports fictional *shops*, so a group
+            whose best offer is sample data from a real retailer was disclosed
+            nowhere on a plain search result.
+          */}
+          {group.bestOffer && (
+            <DemoOfferNotice
+              offer={group.bestOffer}
+              storeName={group.bestOffer.store.name}
+              isDemoStore={destination?.hasDemoStore ?? false}
+            />
+          )}
         </div>
 
         {group.bestOffer && (

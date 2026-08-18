@@ -8,10 +8,11 @@ import {
   type ProductSummary,
 } from '@deal-finder/shared';
 import { Badge, Button, cn } from '@deal-finder/ui';
-import { AlertTriangle, Bookmark, BookmarkCheck, ExternalLink, ImageOff } from 'lucide-react';
+import { AlertTriangle, Bookmark, BookmarkCheck, ImageOff } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { destinationPath } from '../../lib/destination';
+import { DealCta, DemoOfferNotice } from './DealCta';
 import { DeliveryDetails } from './DeliveryDetails';
 
 /**
@@ -21,10 +22,14 @@ import { DeliveryDetails } from './DeliveryDetails';
  * here. Everything else — store, availability, shipping, last checked — is
  * present but quiet.
  *
- * Note the two distinct actions: "View deal" leaves for the store (a real
- * external link, opened in a new tab with `rel="noreferrer"`), while "Track
- * price" stays in the app. They are visually distinguished so a user who wants
- * to buy and a user who wants to wait are not funnelled into the same button.
+ * Note the two distinct actions: the deal CTA is about leaving for the store,
+ * while "Track price" stays in the app. They are visually distinguished so a user
+ * who wants to buy and a user who wants to wait are not funnelled into the same
+ * button.
+ *
+ * Whether the deal CTA actually leaves is not this component's decision. Sample
+ * data must not be presented as a live listing, so `DealCta` asks
+ * `canOpenExternalDeal` and degrades to an internal link when the answer is no.
  */
 
 export interface ProductCardProps {
@@ -161,6 +166,19 @@ export function ProductCard({
           </div>
         )}
 
+        {/*
+          Outside the destination block deliberately. `DeliveryDetails` discloses a
+          fictional *store*, but only when a destination is selected — so before
+          this, a sample offer attributed to a real retailer was disclosed nowhere
+          at all on a plain search result. The claim being made here is about the
+          data, not the shop, so it does not depend on a destination.
+        */}
+        <DemoOfferNotice
+          offer={product}
+          storeName={product.store.name}
+          isDemoStore={isDemoStore}
+        />
+
         <div className="flex flex-wrap items-center gap-1.5">
           <DealQualityInline product={product} />
         </div>
@@ -171,21 +189,17 @@ export function ProductCard({
 
         <div className="flex gap-2 pt-1">
           {/*
-            A real anchor, not a button with an onClick: this navigates to
-            another site, so it must be middle-clickable, copyable and
-            announced as a link. rel="noreferrer" keeps our URL out of the
-            store's referrer logs.
+            Whether this leaves for the retailer at all is decided by
+            `canOpenExternalDeal`, inside `DealCta`. For the sample catalogue it
+            resolves to an internal link to this product's own page, because the
+            store URL points at a listing nobody has seen.
           */}
-          <a
-            href={product.productUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-3 text-sm font-semibold text-ink-900 transition-colors hover:bg-surface-muted"
-          >
-            View deal
-            <ExternalLink className="size-3.5" aria-hidden="true" />
-            <span className="sr-only">(opens {product.store.name} in a new tab)</span>
-          </a>
+          <DealCta
+            offer={product}
+            storeName={product.store.name}
+            internalTo={detailsTo}
+            className="flex-1"
+          />
 
           {onTrack && (
             <Button

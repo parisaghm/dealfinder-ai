@@ -255,6 +255,12 @@ export interface CreateTestOfferOptions {
   deliveryMaxDays?: number | null;
   /** Recorded observations, oldest first, one day apart ending now. */
   history?: number[];
+  /**
+   * Offer-data provenance. Defaults to `'mock'`, which is what every fixture is,
+   * so an existing test keeps the behaviour it had. A test about the external-link
+   * gate opts into a verified source explicitly.
+   */
+  dataSourceType?: string;
 }
 
 /**
@@ -287,6 +293,7 @@ export async function createTestOffer(
       availability: options.availability ?? 'IN_STOCK',
       deliveryMinDays: options.deliveryMinDays ?? null,
       deliveryMaxDays: options.deliveryMaxDays ?? null,
+      dataSourceType: options.dataSourceType ?? 'mock',
     },
     { skipHistory: true },
   );

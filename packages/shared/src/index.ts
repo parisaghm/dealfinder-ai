@@ -32,6 +32,12 @@ export * from './countries';
 // format for the pre-existing payloads; see money/money.ts for why both exist.
 export * from './money';
 
+// ── Offer provenance ────────────────────────────────────────────────────────
+// Whether an offer's data was fetched or invented, and the single gate deciding
+// whether a shopper may be sent to the retailer. Separate from `isDemoStore`,
+// which describes the store rather than the data.
+export * from './offers/data-source';
+
 // ── Pricing & deal quality ──────────────────────────────────────────────────
 export * from './pricing/discount';
 export * from './pricing/statistics';

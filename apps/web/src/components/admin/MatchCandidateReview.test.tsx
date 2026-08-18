@@ -91,12 +91,29 @@ describe('MatchCandidateReview', () => {
     expect(screen.getByRole('button', { name: /^reject$/i })).toBeDisabled();
   });
 
-  it('links out to the source listing in a new tab', () => {
-    renderReview();
+  it('links out to the source listing in a new tab, when the listing is a real one', () => {
+    renderReview({
+      candidate: makeMatchCandidate({
+        sourceProduct: {
+          ...makeMatchCandidate().sourceProduct,
+          dataSourceType: 'structured-data',
+          productUrl: 'https://www.verkkokauppa.com/fi/product/12345',
+        },
+      }),
+    });
     const link = screen.getByRole('link', { name: /open the source listing/i });
-    expect(link).toHaveAttribute('href', 'https://verkkokauppa.test/p/1');
+    expect(link).toHaveAttribute('href', 'https://www.verkkokauppa.com/fi/product/12345');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
+  });
+
+  // A reviewer sent to a fabricated URL learns nothing about whether the match is
+  // right, and in development every candidate comes from the sample catalogue.
+  it('offers no link out for a sample listing', () => {
+    renderReview();
+    expect(
+      screen.queryByRole('link', { name: /open the source listing/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('says how many offers the candidate group already has', () => {

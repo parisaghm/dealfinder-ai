@@ -6,6 +6,7 @@ import {
   deliveredTotal,
   fromDecimalString,
   importDutyStatusFor,
+  leastTrustedDataSource,
   toMoneyAmount,
   toMoneyAmountOrNull,
   type ConvertedMoneyDto,
@@ -71,6 +72,16 @@ export interface StoreOfferRow {
   availability: Availability;
   deliveryMinDays: number | null;
   deliveryMaxDays: number | null;
+  /** How this quote was obtained. Gates the external link, via the shared helper. */
+  dataSourceType: string;
+  /**
+   * The listing this quote is for.
+   *
+   * Joined in solely for provenance and the deep link: a row needs to link to the
+   * product rather than the retailer's front page, and the listing's own source is
+   * needed because a quote is never more trustworthy than the listing beneath it.
+   */
+  product: { productUrl: string; dataSourceType: string };
   lastCheckedAt: Date;
   store: OfferStoreRow;
 }
@@ -312,6 +323,13 @@ export function toDestinationOffer(
     id: offer.id,
     productId: offer.productId,
     store: toStoreSummary(offer.store),
+    // The listing's own URL, so a row can link to the product rather than the
+    // retailer's front page — which is what it fell back to before this existed.
+    productUrl: offer.product.productUrl,
+    // Resolved to the weaker of the two: a quote is never more trustworthy than
+    // the listing it quotes, so a verified quote cannot lift a fixture-seeded URL
+    // into something safe to open.
+    dataSourceType: leastTrustedDataSource(offer.dataSourceType, offer.product.dataSourceType),
     // Never conditional. A fictional retailer is disclosed on every surface that
     // shows one, so the UI can label the catalogue and the prices as synthetic.
     isDemoStore: offer.store.isDemoStore,

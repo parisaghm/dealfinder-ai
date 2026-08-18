@@ -29,6 +29,7 @@ export const PRODUCT_SELECT = {
   currency: true,
   discountPercent: true,
   availability: true,
+  dataSourceType: true,
   lastCheckedAt: true,
   createdAt: true,
   updatedAt: true,

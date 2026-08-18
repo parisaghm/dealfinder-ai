@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { makeCanonicalOffer, makeComparison, makeOfferTrio } from '../../test/factories';
 import { setViewportMatches } from '../../test/setup';
 import { OfferComparisonTable } from './OfferComparisonTable';
@@ -14,8 +15,14 @@ const defaults = {
   comparison: makeComparison(),
 };
 
+// A router is required now: a sample offer's CTA is an internal link to the
+// product page rather than an external anchor to a listing that does not exist.
 const renderTable = (props: Partial<Parameters<typeof OfferComparisonTable>[0]> = {}) =>
-  render(<OfferComparisonTable {...defaults} {...props} />);
+  render(
+    <MemoryRouter>
+      <OfferComparisonTable {...defaults} {...props} />
+    </MemoryRouter>,
+  );
 
 const text = () => document.body.textContent?.replace(/[\s ]+/g, ' ') ?? '';
 

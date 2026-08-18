@@ -13,10 +13,12 @@ import {
   SectionHeading,
   Skeleton,
 } from '@deal-finder/ui';
-import { ArrowLeft, ArrowRight, ExternalLink, ImageOff, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ImageOff, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { DealQualityBadge } from '../components/deals/DealQualityBadge';
+import { DealCta, DemoOfferNotice } from '../components/deals/DealCta';
+import { DemoStoreNotice } from '../components/deals/DeliveryDetails';
 import { ProductCard } from '../components/deals/ProductCard';
 import { DealQualityExplainer } from '../components/product/DealQualityExplainer';
 import { PriceHistoryChart } from '../components/product/PriceHistoryChart';
@@ -107,6 +109,18 @@ export function ProductDetailsPage() {
     ? (destinationOffers.data?.offers.find((offer) => offer.productId === data.id)?.delivery
         .totalDeliveredPrice?.major ?? null)
     : null;
+
+  /**
+   * Whether the retailer itself is fictional.
+   *
+   * Only knowable when a destination is selected, because that is the response
+   * carrying `isDemoStore`. Absent, this stays false and the offer-level notice
+   * below does the disclosing — which is the right fallback, since the claim that
+   * matters here ("this price is sample data") is true either way.
+   */
+  const isDemoStore =
+    destinationOffers.data?.offers.find((offer) => offer.productId === data.id)?.isDemoStore ??
+    false;
 
   /**
    * Where the typed number lands.
@@ -235,17 +249,32 @@ export function ProductDetailsPage() {
                   />
                 </dl>
 
+                {/*
+                  This page previously disclosed nothing at all, on any surface —
+                  the loudest price in the app with no statement of where it came
+                  from. Both notices are rendered: the store-level one when the
+                  retailer is fictional, the offer-level one when the retailer is
+                  real but its numbers here are not.
+                */}
+                {isDemoStore && <DemoStoreNotice />}
+                <DemoOfferNotice
+                  offer={data}
+                  storeName={data.store.name}
+                  isDemoStore={isDemoStore}
+                />
+
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <a
-                    href={data.productUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent-700 px-4 text-[0.9375rem] font-semibold text-white transition-colors hover:bg-accent-800"
-                  >
-                    View at {data.store.name}
-                    <ExternalLink className="size-4" aria-hidden="true" />
-                    <span className="sr-only">(opens in a new tab)</span>
-                  </a>
+                  {/*
+                    No `internalTo`: this *is* the product's own page, so a demo
+                    offer has nowhere to send anyone and renders a disabled control
+                    rather than a link that goes back to here.
+                  */}
+                  <DealCta
+                    offer={data}
+                    storeName={data.store.name}
+                    appearance="primary"
+                    externalLabel={`View at ${data.store.name}`}
+                  />
 
                   {watchlistItem && (
                     <Button

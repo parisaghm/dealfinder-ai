@@ -86,6 +86,8 @@ export const matchCandidateSchema = z.object({
     storeName: z.string().max(120),
     storeSlug: z.string().max(64),
     productUrl: z.string().max(2048),
+    /** Provenance of the listing, so the admin link is gated like every other. */
+    dataSourceType: z.string().max(32),
     currentPrice: z.number().finite().nonnegative(),
     currency: z.string().max(8),
   }),

@@ -1,4 +1,5 @@
 import {
+  canOpenExternalDeal,
   formatAvailability,
   formatDiscount,
   formatMoney,
@@ -10,7 +11,7 @@ import {
   type OfferSort,
 } from '@deal-finder/shared';
 import { Badge, Field, Select, cn } from '@deal-finder/ui';
-import { ExternalLink } from 'lucide-react';
+import { DealCta, DemoOfferNotice } from './DealCta';
 import { SM_BREAKPOINT_QUERY, useMediaQuery } from '../../lib/use-media-query';
 
 /**
@@ -53,6 +54,10 @@ export function OfferComparisonTable({
 }: OfferComparisonTableProps) {
   const wide = useMediaQuery(SM_BREAKPOINT_QUERY);
 
+  // The first offer we will not link out to, if any. Drives the single table-level
+  // disclosure below; `DealCta` independently decides each row's own affordance.
+  const demoOffer = offers.find((offer) => !canOpenExternalDeal(offer));
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -91,6 +96,16 @@ export function OfferComparisonTable({
         <p className="rounded-lg bg-warn-50 p-2.5 text-xs text-warn-800 ring-1 ring-warn-200">
           {comparison.cheapestTotalCaveat}
         </p>
+      )}
+
+      {/*
+        One disclosure for the table rather than one per row: repeating the same
+        sentence beside every offer buries it, and every row in this comparison
+        shares the same provenance in practice. Rendered from the first
+        non-linkable offer, which is also the one whose CTA changed.
+      */}
+      {demoOffer && (
+        <DemoOfferNotice offer={demoOffer} storeName={demoOffer.store.name} />
       )}
     </div>
   );
@@ -211,16 +226,12 @@ function WideTable({
                   {formatRelativeTime(offer.lastCheckedAt)}
                 </td>
                 <td className="px-3 py-2.5 text-right">
-                  <a
-                    href={offer.productUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-accent-700 hover:text-accent-800"
-                  >
-                    View deal
-                    <ExternalLink className="size-3" aria-hidden="true" />
-                    <span className="sr-only">at {offer.store.name} (opens in a new tab)</span>
-                  </a>
+                  <DealCta
+                    offer={offer}
+                    storeName={offer.store.name}
+                    internalTo={`/products/${offer.id}`}
+                    appearance="link"
+                  />
                 </td>
               </tr>
             );
@@ -283,16 +294,12 @@ function NarrowList({
               <Row label="Last checked" value={formatRelativeTime(offer.lastCheckedAt)} />
             </dl>
 
-            <a
-              href={offer.productUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-3 text-sm font-semibold text-ink-900"
-            >
-              View deal
-              <ExternalLink className="size-3.5" aria-hidden="true" />
-              <span className="sr-only">at {offer.store.name} (opens in a new tab)</span>
-            </a>
+            <DealCta
+              offer={offer}
+              storeName={offer.store.name}
+              internalTo={`/products/${offer.id}`}
+              className="mt-3 w-full"
+            />
           </li>
         );
       })}

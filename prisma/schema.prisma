@@ -316,6 +316,14 @@ model StoreOffer {
 
   availability Availability @default(UNKNOWN)
 
+  /// How this destination quote was obtained — mirrors ProviderSourceKind.
+  ///
+  /// Carried per offer rather than inferred from the product, because the two can
+  /// legitimately differ: a listing read from a merchant feed may be quoted to a
+  /// particular country by a separate integration. An offer is never treated as
+  /// more trustworthy than the listing it quotes.
+  dataSourceType String @default("mock")
+
   /// Business days, as the store estimates them. Null means not published, which
   /// is distinct from "fast".
   deliveryMinDays Int?
@@ -467,6 +475,17 @@ model Product {
   gtin        String?
   ean         String?
   mpn         String?
+
+  /// How *this listing's* data was obtained — mirrors ProviderSourceKind.
+  ///
+  /// Distinct from `Store.dataSourceType` and from `Store.isDemoStore`, and the
+  /// distinction is load-bearing. A real retailer can carry an invented listing:
+  /// the Gigantti sample catalogue interpolates synthetic ids into Gigantti's
+  /// genuine URL shape, so `productUrl` above is well-formed, on a real domain,
+  /// and a 404. `isDemoStore` is false for that store — correctly, Gigantti
+  /// exists — so it cannot be what decides whether the URL may be opened.
+  /// `canOpenExternalDeal` in @deal-finder/shared reads this column instead.
+  dataSourceType String @default("mock")
 
   /// The real-world product this listing is an offer for. Null means "not
   /// matched yet", which is a permanently valid state — a store can publish a

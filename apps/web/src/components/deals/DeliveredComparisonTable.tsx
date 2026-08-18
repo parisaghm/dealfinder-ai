@@ -12,7 +12,7 @@ import {
   type DestinationOffer,
 } from '@deal-finder/shared';
 import { Badge, cn } from '@deal-finder/ui';
-import { ExternalLink } from 'lucide-react';
+import { DealCta } from './DealCta';
 import { LG_BREAKPOINT_QUERY, SM_BREAKPOINT_QUERY, useMediaQuery } from '../../lib/use-media-query';
 import { DELIVERY_COPY, DeliveryDetails, formatDeliveryWindow } from './DeliveryDetails';
 
@@ -280,6 +280,14 @@ function CheapestDeliveredBadge() {
   return <Badge tone="accent">Cheapest delivered total</Badge>;
 }
 
+/**
+ * The row's deal affordance.
+ *
+ * Was a bare anchor to `offer.store.websiteUrl` — the retailer's *front page*, not
+ * the product, because this DTO carried no product URL. It now carries one, so a
+ * verified offer links to the listing, and a sample offer links inward instead of
+ * pretending there is a listing to visit.
+ */
 function ViewDealLink({
   offer,
   className,
@@ -288,19 +296,13 @@ function ViewDealLink({
   className?: string;
 }) {
   return (
-    <a
-      href={offer.store.websiteUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-lg border border-line-strong px-2.5 text-xs font-semibold text-ink-900 transition-colors hover:bg-surface-muted',
-        className,
-      )}
-    >
-      View deal
-      <ExternalLink className="size-3" aria-hidden="true" />
-      <span className="sr-only">(opens {offer.store.name} in a new tab)</span>
-    </a>
+    <DealCta
+      offer={offer}
+      storeName={offer.store.name}
+      internalTo={`/products/${offer.productId}`}
+      appearance="compact"
+      className={className}
+    />
   );
 }
 

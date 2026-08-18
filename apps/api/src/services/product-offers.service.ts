@@ -54,11 +54,17 @@ const OFFER_SELECT = {
   availability: true,
   deliveryMinDays: true,
   deliveryMaxDays: true,
+  dataSourceType: true,
   lastCheckedAt: true,
   store: { select: STORE_SELECT },
   product: {
     select: {
       id: true,
+      // Provenance and the deep link: a row must be able to link to the listing
+      // rather than the retailer's front page, and the gate needs the listing's
+      // own source because a quote is never more trustworthy than its listing.
+      productUrl: true,
+      dataSourceType: true,
       discountPercent: true,
       currency: true,
       currentPrice: true,

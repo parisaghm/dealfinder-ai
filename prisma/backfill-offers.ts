@@ -117,6 +117,7 @@ async function main() {
         currency: true,
         availability: true,
         lastCheckedAt: true,
+        dataSourceType: true,
         store: { select: { countryCode: true } },
       },
     });
@@ -143,6 +144,10 @@ async function main() {
             // product price.
             shippingPrice:
               product.shippingPrice == null ? null : Number(product.shippingPrice),
+            // Inherited from the listing this offer is derived from. This script
+            // observes nothing itself, so it cannot make the data any more
+            // trustworthy than the row it read.
+            dataSourceType: product.dataSourceType,
             // A Finnish store selling to a Finnish buyer: VAT is already in the
             // shelf price and there is no customs border, so there is no hidden
             // charge to estimate. Both derived by the shared route rules.

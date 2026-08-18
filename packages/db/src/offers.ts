@@ -51,6 +51,15 @@ export interface StoreOfferUpsertInput {
   availability: Availability;
   deliveryMinDays?: number | null;
   deliveryMaxDays?: number | null;
+
+  /**
+   * How this quote was obtained -- the provider's own `sourceKind`.
+   *
+   * Required rather than defaulted, so a new ingestion path cannot quietly
+   * inherit `'mock'` and have synthetic data presented as fetched. The caller
+   * knows which provider it just spoke to; this module does not.
+   */
+  dataSourceType: string;
 }
 
 export interface UpsertStoreOfferResult {
@@ -181,6 +190,7 @@ export async function upsertStoreOfferFromSource(
     availability: source.availability,
     deliveryMinDays: source.deliveryMinDays ?? null,
     deliveryMaxDays: source.deliveryMaxDays ?? null,
+    dataSourceType: source.dataSourceType,
     lastCheckedAt: now,
   };
 

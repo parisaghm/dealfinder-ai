@@ -127,7 +127,13 @@ async function seedStore(dataset: MockStoreDataset) {
     supportedCurrencies: [...(dataset.supportedCurrencies ?? [currency])],
     supportedDeliveryCountries: Object.keys(dataset.deliveryRules ?? { FI: {} }),
     vatRegistrationCountry: dataset.vatRegistrationCountry ?? dataset.countryCode ?? 'FI',
-    dataSourceType: 'mock',
+    /**
+     * How the store *record* was obtained. Its listings and quotes carry their own
+     * `dataSourceType`, and that is the one the UI gates the external link on: a
+     * real retailer can hold an invented listing, which is exactly the case for
+     * the three Finnish stores below.
+     */
+    dataSourceType: createMockProvider(dataset, { minLatencyMs: 0, maxLatencyMs: 0 }).sourceKind,
     isDemoStore: dataset.isDemoStore ?? false,
   };
 
@@ -156,6 +162,18 @@ async function seedProducts(dataset: MockStoreDataset, storeId: string) {
   // The store's own currency. The three Finnish datasets omit it and default to
   // EUR, exactly as they did before this field existed.
   const currency: Currency = dataset.currency ?? 'EUR';
+
+  /**
+   * Provenance taken from the provider rather than written as a literal here.
+   *
+   * `productUrl` below is a synthetic id interpolated into the retailer's genuine
+   * URL shape, so for Gigantti, Power and Verkkokauppa it is a well-formed 404 on
+   * a real domain. Recording where the data actually came from is what stops the
+   * web layer offering it as a live deal — and reading it off the provider means
+   * that if the adapter ever reported a different kind, the seed would follow it
+   * instead of contradicting it.
+   */
+  const { sourceKind } = createMockProvider(dataset, { minLatencyMs: 0, maxLatencyMs: 0 });
 
   for (const definition of dataset.products) {
     const history = generatePriceHistory(
@@ -187,6 +205,7 @@ async function seedProducts(dataset: MockStoreDataset, storeId: string) {
         ean: definition.ean ?? null,
         mpn: definition.mpn ?? null,
         attributes: definition.attributes ?? null,
+        dataSourceType: sourceKind,
       },
       // The synthetic series below replaces any single observation.
       { now: SEED_NOW, skipHistory: true },
@@ -340,6 +359,9 @@ async function seedStoreOffers(
           availability: offer.availability,
           deliveryMinDays: offer.deliveryMinDays ?? null,
           deliveryMaxDays: offer.deliveryMaxDays ?? null,
+          // Straight from the adapter that produced this quote, so the row records
+          // where the price came from rather than where we hope it came from.
+          dataSourceType: provider.sourceKind,
           // Tax and duty are left to the shared route rules rather than asserted
           // by the dataset, so one implementation governs every store.
         },

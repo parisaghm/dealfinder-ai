@@ -2,9 +2,11 @@ import {
   availabilitySchema,
   countryCodeSchema,
   currencySchema,
+  DATA_SOURCE_TYPES,
   type Availability,
   type CountryCode,
   type Currency,
+  type DataSourceType,
   type StoreRegion,
 } from '@deal-finder/shared';
 import { z } from 'zod';
@@ -146,17 +148,18 @@ export interface ExternalStoreOffer {
   estimatedImportFees?: number | null;
 }
 
-export const PROVIDER_SOURCE_KINDS = [
-  /** Bundled sample data. No network access. */
-  'mock',
-  /** Official/partner HTTP API. */
-  'api',
-  /** Structured data published by the page (JSON-LD, microdata). */
-  'structured-data',
-  /** Rendered DOM read through a headless browser. */
-  'browser',
-] as const;
-export type ProviderSourceKind = (typeof PROVIDER_SOURCE_KINDS)[number];
+/**
+ * Where a provider's data comes from.
+ *
+ * Re-exported from `@deal-finder/shared` rather than declared here. The values
+ * are a trust vocabulary — the web layer decides whether to offer an external
+ * retailer link from them — so the API, the browser and this package must read
+ * the identical list. Two hand-maintained copies would eventually disagree about
+ * which sources are safe, and the disagreement would surface as a shopper being
+ * sent to a product that does not exist.
+ */
+export const PROVIDER_SOURCE_KINDS = DATA_SOURCE_TYPES;
+export type ProviderSourceKind = DataSourceType;
 
 export interface ProductSearchInput {
   /** Free-text terms. Matched against name and brand. */

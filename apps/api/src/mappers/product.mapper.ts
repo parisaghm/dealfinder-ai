@@ -51,6 +51,7 @@ export interface ProductRow {
   originalPrice: Prisma.Decimal | null;
   shippingPrice: Prisma.Decimal | null;
   currency: string;
+  dataSourceType: string;
   discountPercent: number;
   availability: Availability;
   lastCheckedAt: Date;
@@ -126,6 +127,9 @@ export function toProductSummary(
     vertical: product.vertical,
     imageUrl: product.imageUrl,
     productUrl: product.productUrl,
+    // Transported, never inferred. The web layer must not have to guess whether
+    // the URL above points at a listing anyone has actually seen.
+    dataSourceType: product.dataSourceType,
     store: toStoreSummary(product.store),
 
     currency,

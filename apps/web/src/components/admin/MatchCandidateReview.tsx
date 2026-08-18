@@ -1,5 +1,6 @@
 import { formatMoney, type Currency, type MatchCandidate } from '@deal-finder/shared';
 import { Badge, Button, cn } from '@deal-finder/ui';
+import { DealCta } from '../deals/DealCta';
 import { AlertTriangle, ArrowRight, Check, ImageOff, X } from 'lucide-react';
 
 /**
@@ -124,15 +125,17 @@ export function MatchCandidateReview({
         >
           Reject
         </Button>
-        <a
-          href={source.productUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex h-9 items-center px-2 text-xs font-semibold text-accent-700 hover:text-accent-800"
-        >
-          Open the source listing
-          <span className="sr-only"> at {source.storeName} (opens in a new tab)</span>
-        </a>
+        {/*
+          Gated like every shopper-facing link. A reviewer sent to a fabricated URL
+          learns nothing about whether the match is right, and the sample catalogue
+          is what this screen is reviewed against in development.
+        */}
+        <DealCta
+          offer={source}
+          storeName={source.storeName}
+          appearance="link"
+          externalLabel="Open the source listing"
+        />
       </div>
     </div>
   );

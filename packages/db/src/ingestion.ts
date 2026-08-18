@@ -41,6 +41,16 @@ export interface ProductUpsertInput {
   currency: string;
   availability: Availability;
   attributes?: Record<string, unknown> | null;
+
+  /**
+   * How this listing was obtained -- the provider's own `sourceKind`.
+   *
+   * Required rather than defaulted, because it governs whether the web layer will
+   * offer `productUrl` above as an external link. A default would let a new
+   * ingestion path silently inherit `'mock'`, or worse, inherit a trusted value
+   * it has not earned. The caller knows which provider it just spoke to.
+   */
+  dataSourceType: string;
 }
 
 export interface UpsertProductResult {
@@ -101,6 +111,7 @@ export async function upsertProductFromSource(
     currency: source.currency,
     discountPercent,
     availability: source.availability,
+    dataSourceType: source.dataSourceType,
     lastCheckedAt: now,
   };
 

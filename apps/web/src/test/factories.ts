@@ -74,6 +74,11 @@ export function makeProduct(overrides: Partial<ProductSummary> = {}): ProductSum
     vertical: 'electronics',
     imageUrl: '/images/products/headphones.svg',
     productUrl: 'https://store.test/p/ext-1',
+    // Mock by default, because that is what the whole development catalogue is —
+    // including the listings attributed to real retailers like the Gigantti store
+    // below. A test about the external-link gate opts into a verified source with
+    // `makeLiveProduct`, so the honest default stays the demo one.
+    dataSourceType: 'mock',
     store: {
       id: 'store-1',
       slug: 'gigantti',
@@ -267,6 +272,7 @@ export function makeMatchCandidate(overrides: Partial<MatchCandidate> = {}): Mat
       storeName: 'Verkkokauppa.com',
       storeSlug: 'verkkokauppa',
       productUrl: 'https://verkkokauppa.test/p/1',
+      dataSourceType: 'mock',
       currentPrice: 949,
       currency: 'EUR',
     },
@@ -426,6 +432,33 @@ export function makeDutiableDelivery(): DeliveryToDestination {
   });
 }
 
+/**
+ * A listing whose data came from a real integration, on a real host.
+ *
+ * The counterpart to `makeProduct`'s mock default, and the only way to get an
+ * external "View deal" link in a test. The host matters: `canOpenExternalDeal`
+ * rejects RFC 6761 reserved names, so `store.test` — fine for every other fixture
+ * — cannot stand in for a shop a shopper could actually reach.
+ */
+export function makeLiveProduct(overrides: Partial<ProductSummary> = {}): ProductSummary {
+  return makeProduct({
+    dataSourceType: 'api',
+    productUrl: 'https://www.gigantti.fi/product/sony-wh-1000xm5',
+    ...overrides,
+  });
+}
+
+/** The destination-offer equivalent of `makeLiveProduct`. */
+export function makeLiveDestinationOffer(
+  overrides: Partial<DestinationOffer> = {},
+): DestinationOffer {
+  return makeDestinationOffer({
+    dataSourceType: 'api',
+    productUrl: 'https://www.power.fi/tuote/lumenta-27',
+    ...overrides,
+  });
+}
+
 export function makeDestinationOffer(
   overrides: Partial<DestinationOffer> = {},
 ): DestinationOffer {
@@ -440,6 +473,9 @@ export function makeDestinationOffer(
       logoUrl: null,
       isActive: true,
     },
+    productUrl: 'https://techhalle.test/produkt/ext-1',
+    // As with `makeProduct`, mock is the honest default for a fixture.
+    dataSourceType: 'mock',
     isDemoStore: false,
     delivery: makeDelivery(),
     ...overrides,

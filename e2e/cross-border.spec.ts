@@ -357,6 +357,17 @@ test('2 — selecting Finland, EUR and European stores narrows results to what c
   // Synthetic retailers say so, in text.
   await expect(page.getByText(/demo store/i).first()).toBeVisible();
   await expect(page.getByText(/illustrative prices/i).first()).toBeVisible();
+
+  /*
+    And no result offers to send the shopper to a retailer.
+
+    The whole seeded catalogue is sample data — including the listings attributed
+    to Gigantti, Power and Verkkokauppa.com, whose synthetic product URLs sit on
+    those retailers' real domains and resolve to nothing. Asserted as the absence
+    of any new-tab anchor rather than by checking each card, so a future surface
+    that reintroduces one fails here.
+  */
+  await expect(page.locator('a[target="_blank"]')).toHaveCount(0);
 });
 
 // ── 3. What is allowed to win ───────────────────────────────────────────────
@@ -850,6 +861,10 @@ test('9 — the destination flow is usable from the keyboard and readable withou
     'not currently available to buy',
   );
   await expect(page.getByTestId('demo-store-footnote')).toContainText(/fictional retailer/i);
+  // The delivered comparison used to link each row to the retailer's front page.
+  // It links to the product now, and only when the offer was actually fetched —
+  // which no seeded offer was.
+  await expect(page.locator('a[target="_blank"]')).toHaveCount(0);
 
   // Watchlist actions are reachable too, and name their destination.
   await page.goto('/watchlist');
