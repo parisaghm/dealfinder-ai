@@ -421,8 +421,26 @@ test('3b — the cheapest shelf price cannot win on an unpublished delivery cost
   /*
     A separate fixture because it is a separate claim, and only one seeded group
     states it cleanly: here the *lowest listed price on the page* belongs to the
-    offer whose delivery is unpublished. It must not be crowned — and in this
-    group nothing is, which is the honest outcome when no offer clears the bar.
+    offer whose delivery is unpublished. It must not be crowned.
+
+    ## What this test does not assert, and why
+
+    It used to also require that *nobody* be crowned. That passed for a year for
+    the wrong reason: the group's other offer is Danish, so crowning it needs a
+    DKK→EUR rate no older than `FX_RATE_MAX_AGE_HOURS` (48), and on a development
+    database seeded a fortnight ago there is no such rate — every converted offer
+    was barred, so the page had no winner at all. Against a freshly seeded
+    database the rate is hours old, Danske Elektro's delivered total is genuinely
+    known, and it is *correctly* crowned. The assertion was measuring how stale
+    the fixture data had become, which is the same trap
+    `apps/api/tests/destination.test.ts` documents at its route-level cases.
+
+    So the claim is pinned to the offer it is actually about — the one with no
+    published delivery cost — and says nothing about how many *other* offers
+    clear the bar. Whether a comparable offer wins depends on FX freshness and is
+    covered where rates can be injected rather than inherited from the clock:
+    `destination.test.ts` → "shows a stale rate, labels its age, and refuses to
+    rank on it as if fresh".
   */
   const list = await json<{ items: CanonicalListItem[] }>(
     request,
@@ -444,12 +462,32 @@ test('3b — the cheapest shelf price cannot win on an unpublished delivery cost
 
   const rows = page.getByRole('row');
   const unpublished = rows.filter({ hasText: 'Nordbyte' });
+
+  // The delivery cost is named as unpublished rather than quietly treated as free.
   await expect(unpublished).toContainText('Not published');
+
+  // And the total stays unknown, because an unknown shipping cost cannot produce
+  // a known total. This is the assertion the whole feature exists to protect.
   await expect(unpublished.getByTestId('delivered-price')).toHaveCount(0);
 
-  // Nobody is crowned, and the page says so rather than leaving a gap.
-  await expect(page.getByText(CHEAPEST_BADGE, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(/no offer is shown as cheapest/i)).toBeVisible();
+  // The safety property: the cheapest *shelf* price does not get crowned on a
+  // delivery cost nobody published, however cheap the item itself looks.
+  await expect(unpublished).not.toContainText(CHEAPEST_BADGE);
+
+  /*
+    At most one winner, and it is never a row whose total is unknown.
+
+    Stated as "no crowned row lacks a delivered total" rather than "Danske Elektro
+    wins": a comparable offer is *allowed* to win, and whether one does depends on
+    how fresh the FX rates are. Pinning the winner by name would reintroduce
+    exactly the dependence on seed age that this test was corrected to remove,
+    while this holds whether the page crowns nobody or somebody.
+  */
+  const crowned = rows.filter({ hasText: CHEAPEST_BADGE });
+  expect(await crowned.count()).toBeLessThanOrEqual(1);
+  for (const row of await crowned.all()) {
+    await expect(row.getByTestId('delivered-price')).toHaveCount(1);
+  }
 });
 
 // ── 4. The destination decides the answer ───────────────────────────────────
