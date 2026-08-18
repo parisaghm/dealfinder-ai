@@ -24,6 +24,8 @@
     "format:check": "prettier --check .",
     "db:dev": "cross-env NODE_OPTIONS=--experimental-sqlite prisma dev --detach --port 51213 --db-port 51214 --shadow-db-port 51215",
     "db:dev:stop": "cross-env NODE_OPTIONS=--experimental-sqlite prisma dev stop",
+    "db:e2e:prepare": "tsx scripts/prepare-e2e-db.ts",
+    "db:e2e:stop": "cross-env NODE_OPTIONS=--experimental-sqlite prisma dev stop dealfinder-e2e",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev && prisma generate",
     "db:deploy": "prisma migrate deploy && prisma generate",

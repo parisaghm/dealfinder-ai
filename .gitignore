@@ -7,9 +7,14 @@ build/
 *.tsbuildinfo
 
 # Environment — never commit real credentials. Use .env.example as the template.
+#
+# `.env.e2e` is generated per machine by `npm run db:e2e:prepare`: the database
+# port is allocated by `prisma dev` and is not portable, so only its template is
+# committed.
 .env
 .env.*
 !.env.example
+!.env.e2e.example
 
 # Prisma generated client (regenerate with `npm run db:generate`)
 packages/db/src/generated/

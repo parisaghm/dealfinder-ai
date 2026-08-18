@@ -234,6 +234,91 @@ consequences are worse than usual. The same applies to `prisma migrate reset` an
 
 ---
 
+## The end-to-end database is a separate instance
+
+`npm run test:e2e` does **not** use the development database. It uses a dedicated
+`prisma dev` instance called `dealfinder-e2e`, with its own storage, its own
+query-insights stream and its own process.
+
+```bash
+npm run db:e2e:prepare     # create/start it, apply migrations, seed, verify
+npm run test:e2e           # picks it up automatically via .env.e2e
+npm run db:e2e:stop        # stop it (the development instance keeps running)
+```
+
+### Why
+
+The shared instance degraded under sustained end-to-end load. Observed directly:
+after a full suite the daemon began accepting a connection and immediately
+resetting it, then refusing connections altogether, and finally exited — while
+`prisma dev ls` still reported `running` and the ports still showed as listening.
+Downstream that looked like `Connection terminated unexpectedly`, a page that
+rendered its shell with an empty `<main>`, and
+`Timed out waiting 120000ms from config.webServer`. None of it is an assertion
+failure, and all of it reads like one.
+
+Running the suite against its own instance removed the whole class of failure:
+three consecutive 27-test runs with the daemon holding one PID throughout, no
+refused connection, no stalled request and no `webServer` timeout.
+
+### This database is disposable
+
+Treat it as test infrastructure, not as data. It is *meant* to be thrown away:
+
+```bash
+npx prisma dev rm dealfinder-e2e --force && npm run db:e2e:prepare
+```
+
+That is the point of the split. The development database cannot be reset without
+destroying the seeded catalogue, so recovering it means the careful non-destructive
+procedure above. This one can be rebuilt in a minute, which is also how its
+query-insights store is kept small — the shared instance's had reached 6.4 GB
+against 219 MB of actual data, and recreating an instance sidesteps any question
+of whether deleting Prisma's internal files by hand is supported.
+
+**It must never share state with the development database.** No suite writes to
+`.env`'s database, and nothing seeds both from one command.
+
+### The port cannot be written down
+
+`prisma dev` **ignores** `--port`, `--db-port` and `--shadow-db-port` in the
+installed version (v0.16.27). It auto-allocates the next free block per instance,
+so the database port depends on what was already running when the instance was
+created — asking for 51314 and getting 51218 is normal, and the numbers differ
+between machines.
+
+`db:e2e:prepare` therefore *discovers* the port from the instance's own
+`server.json` after starting it, and generates `.env.e2e` from that.
+**No committed file hard-codes the port.** To read it by hand:
+
+```bash
+npx prisma dev ls
+```
+
+### How Playwright resolves the database
+
+`playwright.config.ts`, in order:
+
+1. `E2E_DATABASE_URL`, if set — redirects a single run without editing anything.
+2. `DATABASE_URL` from `.env.e2e`, if that file exists (it is gitignored; commit
+   nothing but `.env.e2e.example`).
+3. Neither: the API inherits `.env` exactly as before, so a checkout with no E2E
+   instance still works.
+
+When a URL is found it is applied in **two** places, which matters more than it
+looks. The API `webServer` gets it, and so does the Playwright worker process —
+because the notification ledger cleanup in `e2e/main-flow.spec.ts` reaches the
+database directly rather than through the API. Setting only the `webServer` env
+left that sweep talking to `.env`'s database, where the recorded id does not
+exist: it reported nothing to delete, cleared the ledger, and the `TEST` row
+survived in the E2E database. Cleanup that silently targets the wrong database is
+worse than no cleanup, because the ledger then claims to be done.
+
+`workers: 1`, `MONITOR_ENABLED=false` and `DATABASE_POOL_MAX=1` are unchanged and
+still required: PGlite accepts one active connection at a time and queues the rest.
+
+---
+
 ## Migration safety guard
 
 `apps/api/tests/migration-safety.test.ts` reads every committed `migration.sql`
