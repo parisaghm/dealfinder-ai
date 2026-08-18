@@ -260,6 +260,29 @@ None of the three Finnish datasets is scraped: in the default `mock` mode every
 price in the system is a fixture. The Finnish catalogues keep their original
 numbers because the end-to-end suite asserts them.
 
+**Retailer names may represent real businesses, but the current demo catalogue,
+prices and availability are illustrative unless an offer is explicitly marked as
+live/verified.** A real store name is not evidence that the offer under it is
+real, and the two facts are recorded separately:
+
+- `Store.isDemoStore` says the **shop** is invented. True for the seven European
+  stores, false for Gigantti, Power and Verkkokauppa.com — those businesses exist.
+- `Product.dataSourceType` and `StoreOffer.dataSourceType` say the **offer data**
+  is invented. In the default `mock` mode this is `mock` for all ten stores,
+  including the three real ones.
+
+That distinction is load-bearing rather than decorative. The sample catalogues
+build product URLs by substituting a synthetic id into each retailer's genuine URL
+shape, so `https://www.gigantti.fi/product/gig-sony-wh1000xm5` is well-formed, on
+a real domain, and a 404. A single helper — `canOpenExternalDeal` in
+`@deal-finder/shared` — decides whether any surface may render an external
+"View deal ↗", and it fails closed: demo data, an unrecognised source, or a
+missing URL all yield no retailer link. Demo offers instead disclose
+*"Demo offer from Gigantti"* and *"Demo data — this offer is illustrative and may
+not exist on the retailer's website"*, and link inward to the product's own page.
+
+Nothing here claims that a demo price reflects a retailer's real inventory.
+
 The demo stores exist to make destination behaviour *visible*: two of them quote
 in a foreign currency so conversion is exercised, one publishes no delivery cost
 for some items so the unknown-total path is real, one does not ship to Finland at
@@ -525,6 +548,7 @@ is rejected at startup instead of silently never firing.
 | `npm run db:check-test-fixtures` | Read-only: report test fixtures a crashed run left behind ([recovery](docs/database-environment.md)) |
 | ~~`npm run db:reset`~~ | **Do not run.** Drops the schema; see [docs/database-environment.md](docs/database-environment.md) |
 | `npm test` | Unit + API + component suites |
+| `npm run db:e2e:prepare` / `db:e2e:stop` | Create/start and stop the dedicated `dealfinder-e2e` database Playwright uses |
 | `npm run test:e2e` | Playwright end-to-end |
 
 ### API
@@ -756,18 +780,21 @@ operability, verified in tests — not screen-reader user testing. See
 ## Testing
 
 ```bash
-npm test           # unit + API integration + component
-npm run test:e2e   # Playwright, needs the database running
+npm test                    # unit + API integration + component
+
+npm run db:e2e:prepare      # create/start the dedicated E2E instance, migrate, seed, verify
+npm run test:e2e            # Playwright, against that instance
+npm run db:e2e:stop         # stop it; the development database keeps running
 ```
 
-**1 052 automated tests and 27 end-to-end tests**, all passing.
+**1 099 automated tests and 27 end-to-end tests**, all passing.
 
 | Suite | Count | What it covers |
 |---|---:|---|
-| `packages/shared` unit | **472** | Discount maths, history statistics, deal-quality scoring (including fake-discount and price-increase cases), query parsing, formatting, cross-store matching, the money module (minor-unit invariants, rounding, conversion, missing and stale rates), delivered-total sorting, country and duty rules |
+| `packages/shared` unit | **496** | Discount maths, history statistics, deal-quality scoring (including fake-discount and price-increase cases), query parsing, formatting, cross-store matching, the money module (minor-unit invariants, rounding, conversion, missing and stale rates), delivered-total sorting, country and duty rules, and the offer-provenance gate — every branch of `canOpenExternalDeal`, including the fail-closed ones |
 | `packages/store-providers` unit | **134** | Mock adapters, catalogue integrity, deterministic history, per-destination delivery rules, explicit destination support, retry/backoff limits, robots.txt rules, JSON-LD extraction |
-| `apps/api` integration | **196** | Every endpoint against the real database and the real Express app, with responses re-parsed through the published schemas; filters, sorting, pagination non-overlap, validation failures, 404s, user scoping, security headers; destination search and exclusion counts, the "declared coverage is not proof" case, destination history, four-column watchlist identity and its 409s, delivered-price alerts, and a guard asserting every migration is additive and safely ordered |
-| `apps/web` component | **250** | Cards, comparison tables, filter panel, target-price form, watchlist grouping, settings, destination history chart, destination state and URL handling — including accessibility wiring, one-layout-per-breakpoint and the honesty copy |
+| `apps/api` integration | **200** | Every endpoint against the real database and the real Express app, with responses re-parsed through the published schemas; filters, sorting, pagination non-overlap, validation failures, 404s, user scoping, security headers; destination search and exclusion counts, the "declared coverage is not proof" case, destination history, four-column watchlist identity and its 409s, delivered-price alerts, and a guard asserting every migration is additive and safely ordered |
+| `apps/web` component | **269** | Cards, comparison tables, filter panel, target-price form, watchlist grouping, settings, destination history chart, destination state and URL handling — including accessibility wiring, one-layout-per-breakpoint, the honesty copy, and that no demo offer renders an external retailer link on any surface |
 | `e2e` Playwright | **27** | `main-flow` (10) the six required journeys plus dashboard, settings, fake-discount surfacing and keyboard navigation · `cross-store` (7) matching, grouping, comparison and the review queue · `cross-border` (10) the destination journeys |
 
 API and monitoring tests run against real PostgreSQL, because the behaviour
@@ -776,13 +803,60 @@ scoped updates, SQL-level sorting. A mocked client would only prove the mock was
 called. Fixtures are namespaced per test and cleaned up, so seeded development
 data survives a run.
 
-The end-to-end suite runs with `workers: 1` against the shared seeded database and
-never resets it, so every test is written to be independently re-runnable:
-identifiers are resolved from the API rather than pasted in, the destination is
-cleared through an `addInitScript` guarded by a `sessionStorage` flag so a test's
-own choice survives its navigation, and watchlist rows and settings are restored in
-`beforeEach` **and** `afterEach` — an `afterEach` that never fired because a run
-crashed would otherwise poison every later run.
+### The end-to-end suite uses its own database
+
+Playwright does **not** touch the development database. It runs against a
+dedicated `prisma dev` instance named `dealfinder-e2e`, with its own storage and
+its own port, so a suite that leaves a row behind cannot drift the counts you
+develop against — and `npm run db:e2e:prepare` can verify and reseed it freely.
+
+- **The port is discovered, not written down.** `prisma dev` ignores `--port` in
+  the installed version and allocates its own, differently per machine. The
+  prepare script reads the real port from the instance's `server.json` and writes
+  it to `.env.e2e`; `playwright.config.ts` then parses that file by hand rather
+  than with `dotenv`, which would pull in `.env` alongside it and quietly
+  reintroduce the development `DATABASE_URL` the file exists to displace.
+- **`.env.e2e` is generated and gitignored; `.env.e2e.example` is committed.**
+  The example documents the shape and the reasoning — never copy its port.
+- **`E2E_DATABASE_URL` overrides everything**, for redirecting a single run
+  without editing a file: `E2E_DATABASE_URL="postgres://…" npm run test:e2e`.
+- **The URL is applied in two places** — the API `webServer` *and* the Playwright
+  worker — because `e2e/helpers/test-notifications.ts` reaches Prisma directly.
+  Cleanup that silently targets the wrong database is worse than no cleanup.
+- **`workers: 1`, and it stays that way.** One shared database and one browser;
+  parallel workers would race on the same rows.
+- **`MONITOR_ENABLED=false`** for the E2E API, because a background job rewriting
+  prices mid-assertion is flakiness rather than coverage. `RATE_LIMIT_MAX=10000`
+  for the same reason: a one-IP suite trips the 120/min limiter.
+
+Every test is written to be independently re-runnable: identifiers are resolved
+from the API rather than pasted in, the destination is cleared through an
+`addInitScript` guarded by a `sessionStorage` flag so a test's own choice survives
+its navigation, and watchlist rows and settings are restored in `beforeEach`
+**and** `afterEach` — an `afterEach` that never fired because a run crashed would
+otherwise poison every later run.
+
+### If a suite dies mid-run
+
+The local PGlite database is memory-fragile under long runs and can drop its
+connection part-way, which surfaces as a whole vitest *file* failing at suite
+level with no assertion failures, or as a page rendering its shell with an empty
+`<main>`. It is not data loss. Two things help:
+
+```bash
+DATABASE_IDLE_TIMEOUT_MS=120000 npm test -w @deal-finder/api
+```
+
+holds one connection instead of re-establishing it hundreds of times, and running
+the heavy suites separately — `npm test -w @deal-finder/api` and
+`npm run test:e2e` are the two that stress it — keeps one consumer on the database
+at a time. Full recovery steps are in [docs/database-environment.md](docs/database-environment.md);
+run `npm run db:check-test-fixtures` afterwards so a leaked fixture is found while
+its cause is still obvious.
+
+**Never use `db:reset` as test recovery.** It calls `prisma migrate reset --force`,
+which drops the schema and destroys the data that recovery preserves. Stop and
+restart the instance instead.
 
 ## Adding a new vertical
 
@@ -812,6 +886,12 @@ This is an MVP. Known and deliberate gaps:
   fixtures with illustrative catalogues, prices and delivery rules, labelled as
   such throughout. They demonstrate the mechanism; they do not report on any real
   shop.
+- **No external retailer link for demo data.** The three Finnish stores are real
+  businesses carrying synthetic offers, so `isDemoStore` cannot express that their
+  prices and URLs are fixtures — `Product.dataSourceType` / `StoreOffer.dataSourceType`
+  do. `canOpenExternalDeal` in `@deal-finder/shared` is the single gate on every
+  "View deal ↗", and it fails closed on demo data, an unrecognised source or an
+  unusable URL. Demo offers disclose themselves in visible text and link inward.
 - **Coverage is explicit, not exhaustive.** DealFinder compares *selected*
   retailers. Adding a real one means an individually reviewed integration — an
   official API, an affiliate or merchant feed, or another permitted source — not
