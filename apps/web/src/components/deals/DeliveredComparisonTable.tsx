@@ -145,9 +145,19 @@ export function DeliveredComparisonTable({
                   <th
                     key={column.key}
                     scope="col"
+                    /*
+                      Only the numeric headers refuse to wrap. Thirteen columns of
+                      `whitespace-nowrap` set the table's minimum width from the
+                      longest *label* rather than from any value — "Import
+                      charges", "Delivery time" and "Store currency" are each
+                      wider than the data beneath them — which pushed the action
+                      column off the edge of the scroll container. Letting the
+                      textual labels take two lines narrows the table without
+                      touching a column, a breakpoint or a cell's contents.
+                    */
                     className={cn(
-                      'px-2 py-2 text-xs font-semibold whitespace-nowrap text-ink-500',
-                      column.numeric && 'text-right',
+                      'px-2 py-2 text-xs font-semibold text-ink-500',
+                      column.numeric && 'text-right whitespace-nowrap',
                     )}
                   >
                     {column.label}

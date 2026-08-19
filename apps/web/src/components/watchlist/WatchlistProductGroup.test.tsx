@@ -392,6 +392,114 @@ describe('legacy list-price targets', () => {
     expect(screen.queryByText(/No delivered total can be calculated yet/i)).toBeNull();
     expect(screen.getByTestId('target-status')).toHaveTextContent('Target reached');
   });
+
+  /*
+    The reported bug. A legacy row whose product also happens to have a delivered
+    total for its destination rendered "Current delivered price 1 049 €" directly
+    above "Compares the shelf price only — delivery is not counted." Both cannot
+    be true: this target was compared against the shelf price, and nothing
+    calculated a delivered figure for it to be measured against.
+  */
+  const legacyWithDeliveredTotal = makeWatchlistItem({
+    id: 'watch-legacy-delivered',
+    targetPrice: 249,
+    targetDeliveredPrice: null,
+    currentDeliveredPrice: 1049,
+    deliveredComparison: null,
+  });
+
+  it('labels the compared value a list price, not a delivered price', () => {
+    renderGroup([legacyWithDeliveredTotal]);
+
+    const current = screen.getByTestId('current-list-price');
+    expect(current).toHaveTextContent('140');
+    expect(screen.getByText('Current list price')).toBeInTheDocument();
+  });
+
+  it('never renders a delivered-price label on a list-price target', () => {
+    renderGroup([legacyWithDeliveredTotal]);
+
+    expect(screen.queryByTestId('current-delivered')).toBeNull();
+    expect(screen.queryByText('Current delivered price')).toBeNull();
+    expect(screen.queryByText('Target delivered price')).toBeNull();
+    // The delivered figure itself must not be presented as this row's number.
+    expect(screen.queryByText(/1\s*049/)).toBeNull();
+  });
+
+  it('keeps the shelf-price note beside the list-price labels', () => {
+    renderGroup([legacyWithDeliveredTotal]);
+
+    expect(screen.getByTestId('list-price-target')).toHaveTextContent('249');
+    expect(screen.getByText(/delivery is not counted/i)).toBeInTheDocument();
+  });
+});
+
+describe('delivered-price targets are labelled as delivered', () => {
+  it('names both halves of the pair "delivered"', () => {
+    renderGroup([finland]);
+
+    expect(screen.getByText('Target delivered price')).toBeInTheDocument();
+    expect(screen.getByText('Current delivered price')).toBeInTheDocument();
+    expect(screen.getByTestId('current-delivered')).toHaveTextContent('311,90');
+  });
+
+  it('states the destination and currency on the row itself', () => {
+    renderGroup([finland]);
+
+    expect(screen.getByTestId('target-scope')).toHaveTextContent('Delivered to Finland · EUR');
+  });
+
+  it('does not claim the shelf-price caveat applies', () => {
+    renderGroup([finland]);
+
+    expect(screen.queryByText(/delivery is not counted/i)).toBeNull();
+    expect(screen.queryByTestId('current-list-price')).toBeNull();
+  });
+
+  /*
+    A destination row with no threshold at all still tracks a destination, so its
+    delivered total is genuinely a delivered total and keeps the delivered label.
+  */
+  it('keeps delivered labels on a destination row with no target', () => {
+    const noTarget = makeWatchlistItem({
+      id: 'watch-no-target',
+      targetPrice: null,
+      targetDeliveredPrice: null,
+      currentDeliveredPrice: 311.9,
+      deliveredComparison: null,
+      targetComparison: null,
+      alertStatus: 'NO_TARGET',
+    });
+
+    renderGroup([noTarget]);
+
+    expect(screen.getByTestId('current-delivered')).toHaveTextContent('311,90');
+    expect(screen.queryByTestId('current-list-price')).toBeNull();
+    expect(screen.queryByText(/delivery is not counted/i)).toBeNull();
+  });
+});
+
+describe('a saved target keeps its own destination', () => {
+  /*
+    The header can be browsing Germany while a row says Finland. That is correct —
+    tracking identity includes the destination — and the row must neither relabel
+    itself nor be rewritten by the page's current selection.
+  */
+  it('renders each row from its own saved destination, not a global one', () => {
+    renderGroup([finland, germany]);
+
+    const scopes = screen.getAllByTestId('target-scope').map((node) => node.textContent);
+    expect(scopes).toEqual(['Delivered to Finland · EUR', 'Delivered to Germany · EUR']);
+  });
+
+  it('does not mutate a saved target when the surrounding destination differs', () => {
+    // The group is presentational and takes no destination prop at all, which is
+    // what makes the independence structural rather than merely observed.
+    const { onUpdate } = renderGroup([finland]);
+
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByTestId('target-scope')).toHaveTextContent('Finland');
+  });
 });
 
 describe('demo stores and confirmations', () => {

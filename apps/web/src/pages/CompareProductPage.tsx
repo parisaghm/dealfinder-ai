@@ -1,4 +1,12 @@
-import { countryName, formatMoney, humanise, type OfferSort } from '@deal-finder/shared';
+import {
+  countryName,
+  formatMoney,
+  formatMoneyAmount,
+  humanise,
+  localeForCountry,
+  type CountryCode,
+  type OfferSort,
+} from '@deal-finder/shared';
 import { Badge, Card, ErrorState, SectionHeading, Skeleton } from '@deal-finder/ui';
 import { ArrowLeft, ImageOff, Store } from 'lucide-react';
 import { useMemo } from 'react';
@@ -17,6 +25,7 @@ import {
   paramsToOfferSort,
   paramsToVisibleStores,
 } from '../lib/compare-params';
+import { summariseDeliveredOffers, type DeliveredSummary } from '../lib/delivered-summary';
 import { applyDestinationToParams, useActiveDestination } from '../lib/destination';
 import {
   useCanonicalHistory,
@@ -104,6 +113,22 @@ export function CompareProductPage() {
   );
   const visibleStores = paramsToVisibleStores(searchParams, allStoreSlugs);
   const visibleDeliveredStores = paramsToVisibleStores(searchParams, deliveredStoreSlugs);
+
+  /**
+   * The summary above the table, from the table's own data.
+   *
+   * Null until the destination-aware payload arrives, and deliberately *not*
+   * backfilled from `offers.data.comparison` in the meantime: that summary knows
+   * nothing about the destination, and standing it in front of a delivered
+   * comparison is exactly the contradiction this page was reported for.
+   */
+  const deliveredSummary = useMemo(
+    () =>
+      destinationOffers.data
+        ? summariseDeliveredOffers(destinationOffers.data.offers, destinationOffers.data.comparison)
+        : null,
+    [destinationOffers.data],
+  );
 
   if (product.isPending) return <CompareSkeleton />;
 
@@ -201,7 +226,16 @@ export function CompareProductPage() {
               />
             )}
 
-            {cheapest ? (
+            {/*
+              Two headlines, never mixed. In destination mode every figure is the
+              delivered comparison's own; outside it, the pre-expansion summary is
+              untouched. The wording differs from the table's "Cheapest delivered
+              total" badge on purpose — that exact string identifies the crowned
+              row, and there must be exactly one of it on the page.
+            */}
+            {destination ? (
+              <DeliveredHeadline summary={deliveredSummary} country={destination.country} />
+            ) : cheapest ? (
               <p className="text-lg font-semibold">
                 Cheapest total{' '}
                 <span className="tabular text-accent-800">
@@ -217,6 +251,12 @@ export function CompareProductPage() {
             )}
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {/*
+                Shelf prices across the whole tracked history, with no destination
+                in them. Left as it is in both modes, and labelled as the listed
+                low rather than a total, so it cannot be read as a delivered
+                figure standing beside two that are.
+              */}
               <StatTile
                 label="Cross-store low"
                 value={
@@ -228,24 +268,34 @@ export function CompareProductPage() {
               />
               <StatTile
                 label="Current cheapest"
+                testId="summary-cheapest"
                 value={
-                  comparison.lowestTotalPrice != null
-                    ? formatMoney(comparison.lowestTotalPrice, data.currency)
-                    : '—'
+                  destination
+                    ? formatMoneyAmount(deliveredSummary?.cheapest, localeForCountry(destination.country))
+                    : comparison.lowestTotalPrice != null
+                      ? formatMoney(comparison.lowestTotalPrice, data.currency)
+                      : '—'
                 }
-                hint="delivery included"
+                hint={destination ? 'delivered to your destination' : 'delivery included'}
               />
               <StatTile
                 label="Current spread"
+                testId="summary-spread"
                 value={
-                  comparison.priceSpread != null
-                    ? formatMoney(comparison.priceSpread, data.currency)
-                    : '—'
+                  destination
+                    ? formatMoneyAmount(deliveredSummary?.spread, localeForCountry(destination.country))
+                    : comparison.priceSpread != null
+                      ? formatMoney(comparison.priceSpread, data.currency)
+                      : '—'
                 }
                 hint={
-                  comparison.priceSpreadPercent != null
-                    ? `${Math.round(comparison.priceSpreadPercent)}% between stores`
-                    : undefined
+                  destination
+                    ? deliveredSummary?.spreadPercent != null
+                      ? `${String(Math.round(deliveredSummary.spreadPercent))}% between stores`
+                      : undefined
+                    : comparison.priceSpreadPercent != null
+                      ? `${Math.round(comparison.priceSpreadPercent)}% between stores`
+                      : undefined
                 }
               />
             </div>
@@ -409,9 +459,64 @@ function BackLink() {
   );
 }
 
-function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
+/**
+ * The destination-mode answer, in the destination's own locale and currency.
+ *
+ * Says nothing at all while the payload is in flight. The alternative — showing
+ * the legacy summary until the real one arrives — is what produced the reported
+ * bug in its most confusing form: a "no total can be compared" sentence that
+ * stayed on screen beside a full table of totals.
+ */
+function DeliveredHeadline({
+  summary,
+  country,
+}: {
+  summary: DeliveredSummary | null;
+  country: CountryCode;
+}) {
+  if (summary == null) return null;
+
+  const locale = localeForCountry(country);
+  const { winner, cheapest, comparableCount } = summary;
+
+  if (winner == null || cheapest == null) {
+    return (
+      <p className="text-sm text-ink-500" data-testid="summary-headline">
+        No offer currently publishes both a price and a delivery cost to {countryName(country)}, so
+        no delivered total can be compared.
+      </p>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-0.5 rounded-lg bg-surface-muted p-3">
+    <div className="flex flex-col gap-0.5" data-testid="summary-headline">
+      <p className="text-lg font-semibold">
+        Lowest delivered total{' '}
+        <span className="tabular text-accent-800">{formatMoneyAmount(cheapest, locale)}</span> at{' '}
+        {winner.store.name}
+      </p>
+      <p className="text-sm text-ink-500">
+        {comparableCount}{' '}
+        {comparableCount === 1 ? 'comparable offer delivers' : 'comparable offers deliver'} to{' '}
+        {countryName(country)}.
+      </p>
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  hint,
+  testId,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  testId?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 rounded-lg bg-surface-muted p-3" data-testid={testId}>
       <span className="text-xs text-ink-500">{label}</span>
       <span className="text-base font-semibold tabular">{value}</span>
       {hint && <span className="text-xs text-ink-400">{hint}</span>}

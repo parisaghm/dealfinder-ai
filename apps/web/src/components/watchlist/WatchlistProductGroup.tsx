@@ -79,6 +79,23 @@ export const WATCHLIST_COPY = {
     `Notify me when the delivered price to ${country} is below this ${currency} amount`,
   listTargetLabel: 'Notify me when the list price is below',
   listTargetNote: 'Compares the shelf price only — delivery is not counted.',
+  /*
+    The four value labels, paired so a row cannot mix them. A list-price target
+    was compared against the shelf price, and calling the figure beside it a
+    "delivered price" is a claim about a number nobody calculated — the row said
+    "Current delivered price 1 049 €" directly above "Compares the shelf price
+    only — delivery is not counted."
+  */
+  deliveredTargetTerm: 'Target delivered price',
+  deliveredCurrentTerm: 'Current delivered price',
+  listTargetTerm: 'List-price target',
+  listCurrentTerm: 'Current list price',
+  /*
+    Said once beneath the page heading. A target saved for Finland keeps saying
+    Finland while the header browses Germany, which is correct and looks wrong.
+  */
+  independentDestinations:
+    'Saved targets keep their own delivery country and currency, independent of your current search destination.',
   unknownDelivered: (country: string) =>
     'No delivered total can be calculated yet, so this target cannot be evaluated. Most often the store has not published its delivery cost to ' +
     country +
@@ -404,6 +421,16 @@ function WatchlistTargetRow({
   const currency = item.preferredCurrency;
   const deliveredUnknown = item.targetDeliveredPrice != null && item.currentDeliveredPrice == null;
 
+  /**
+   * A legacy row: a list-price target and no delivered target.
+   *
+   * The single condition behind both the labels and the shelf-price note below,
+   * so the two cannot contradict each other again. A row with *no* target still
+   * counts as destination-aware — it tracks a destination without a threshold,
+   * and its delivered total is genuinely a delivered total.
+   */
+  const isListPriceTarget = item.targetDeliveredPrice == null && item.targetPrice != null;
+
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-line p-3" data-testid="watchlist-target-row">
       <div className="flex flex-wrap items-center gap-2">
@@ -421,24 +448,39 @@ function WatchlistTargetRow({
       </div>
 
       <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
-        <Pair
-          term={`Target delivered price`}
-          value={
-            item.targetDeliveredPrice != null
-              ? formatMoney(item.targetDeliveredPrice, currency)
-              : '—'
-          }
-        />
-        <Pair
-          term="Current delivered price"
-          value={
-            item.currentDeliveredPrice != null
-              ? formatMoney(item.currentDeliveredPrice, currency)
-              : 'Unknown'
-          }
-          tone={item.currentDeliveredPrice == null ? 'warn' : 'default'}
-          testId="current-delivered"
-        />
+        {/*
+          A delivered target is compared against a destination-aware delivered
+          total, so both halves of the pair say "delivered". A list-price target
+          is compared against the shelf price, so neither does.
+        */}
+        {isListPriceTarget ? (
+          <Pair
+            term={WATCHLIST_COPY.listCurrentTerm}
+            value={formatMoney(item.product.currentPrice, item.product.currency)}
+            testId="current-list-price"
+          />
+        ) : (
+          <>
+            <Pair
+              term={WATCHLIST_COPY.deliveredTargetTerm}
+              value={
+                item.targetDeliveredPrice != null
+                  ? formatMoney(item.targetDeliveredPrice, currency)
+                  : '—'
+              }
+            />
+            <Pair
+              term={WATCHLIST_COPY.deliveredCurrentTerm}
+              value={
+                item.currentDeliveredPrice != null
+                  ? formatMoney(item.currentDeliveredPrice, currency)
+                  : 'Unknown'
+              }
+              tone={item.currentDeliveredPrice == null ? 'warn' : 'default'}
+              testId="current-delivered"
+            />
+          </>
+        )}
         {item.deliveredComparison && (
           <Pair
             term="Difference"
@@ -457,7 +499,7 @@ function WatchlistTargetRow({
         */}
         {item.targetPrice != null && (
           <Pair
-            term="List-price target"
+            term={WATCHLIST_COPY.listTargetTerm}
             value={formatMoney(item.targetPrice, item.product.currency)}
             testId="list-price-target"
           />
@@ -468,7 +510,7 @@ function WatchlistTargetRow({
         )}
       </dl>
 
-      {item.targetPrice != null && item.targetDeliveredPrice == null && (
+      {isListPriceTarget && (
         <p className="text-xs text-ink-500">{WATCHLIST_COPY.listTargetNote}</p>
       )}
 

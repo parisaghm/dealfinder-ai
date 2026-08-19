@@ -151,6 +151,14 @@ export function WatchlistPage() {
           Products you are tracking, and where you want them delivered. We check them on a schedule
           and email you when a target is reached. Each destination and currency is its own target.
         </p>
+        {/*
+          Stated because the page looks wrong when it is right: the header can be
+          browsing Germany while a saved row says "Delivered to Finland · EUR".
+          Changing the header must not rewrite a target the user chose.
+        */}
+        <p className="text-sm text-ink-500" data-testid="watchlist-destination-note">
+          {WATCHLIST_COPY.independentDestinations}
+        </p>
       </div>
 
       {watchlist.isPending && (
