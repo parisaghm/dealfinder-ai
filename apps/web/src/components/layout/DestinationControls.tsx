@@ -7,7 +7,7 @@ import {
   type StoreRegion,
 } from '@deal-finder/shared';
 import { Field, SegmentedControl, Select, cn } from '@deal-finder/ui';
-import { useCountries } from '../../lib/queries';
+import { useCountryOptions } from '../../lib/queries';
 import { useDestination } from '../../lib/destination';
 
 /**
@@ -48,19 +48,23 @@ export interface DestinationControlsProps {
 export function DestinationControls({ idPrefix, layout, className }: DestinationControlsProps) {
   const { country, currency, region, isActive, setDestination, clearDestination } =
     useDestination();
-  const countries = useCountries();
-
   const compact = layout === 'header';
 
   /**
    * Selectable destinations, and the rest.
+   *
+   * `useCountryOptions` falls back to the static shared table, so this control is
+   * complete on the first paint and stays complete if `/api/countries` never
+   * answers. The API only mirrors that table, so a dead server is no reason to
+   * offer one country — which is what this did before, and it read as "we ship
+   * to one place" rather than "the server is down".
    *
    * Unsupported countries are listed and disabled rather than omitted. Omitting
    * them leaves "why is Norway missing?" unanswerable; showing them greyed out
    * with a reason is the honest version, and it is also the only way a user can
    * tell "not supported yet" from "we forgot".
    */
-  const options = countries.data?.items ?? [];
+  const options = useCountryOptions();
   const supported = options.filter((option) => option.isSupported);
   const modelled = options.filter((option) => !option.isSupported);
 
@@ -83,11 +87,6 @@ export function DestinationControls({ idPrefix, layout, className }: Destination
             onChange={(event) => setDestination({ country: event.target.value as CountryCode })}
             className={compact ? 'h-9 text-xs' : undefined}
           >
-            {/*
-              Before the country list has loaded, the current value still has to
-              be a valid option or the browser would show an empty select.
-            */}
-            {supported.length === 0 && <option value={country}>{countryName(country)}</option>}
             {supported.map((option) => (
               <option key={option.code} value={option.code}>
                 {option.name}

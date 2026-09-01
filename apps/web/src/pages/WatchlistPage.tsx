@@ -1,9 +1,7 @@
 import type {
-  CountryCode,
   CreateWatchlistItemPayload,
   UpdateWatchlistItemInput,
 } from '@deal-finder/shared';
-import { COUNTRIES } from '@deal-finder/shared';
 import { Card, EmptyState, ErrorState, Skeleton } from '@deal-finder/ui';
 import { BookmarkX } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -17,7 +15,7 @@ import {
 } from '../components/watchlist/WatchlistProductGroup';
 import {
   useAddToWatchlist,
-  useCountries,
+  useCountryOptions,
   useRemoveWatchlistItem,
   useStores,
   useUpdateWatchlistItem,
@@ -39,7 +37,6 @@ import {
  */
 export function WatchlistPage() {
   const watchlist = useWatchlist();
-  const countries = useCountries();
   /**
    * Only to answer "is this a demo store?".
    *
@@ -71,23 +68,9 @@ export function WatchlistPage() {
     [stores.data],
   );
 
-  const countryOptions = useMemo(() => {
-    const fromApi = countries.data?.items;
-    if (fromApi && fromApi.length > 0) {
-      return fromApi.map((entry) => ({
-        code: entry.code,
-        name: entry.name,
-        isSupported: entry.isSupported,
-      }));
-    }
-    // The static table is the same source the API mirrors, so the form is usable
-    // before that request resolves rather than showing an empty select.
-    return COUNTRIES.map((entry) => ({
-      code: entry.code as CountryCode,
-      name: entry.name,
-      isSupported: entry.isSupported,
-    }));
-  }, [countries.data]);
+  // The static table is the same source the API mirrors, so the form is usable
+  // before that request resolves rather than showing an empty select.
+  const countryOptions = useCountryOptions();
 
   const handleAdd = (productId: string, input: CreateWatchlistItemPayload) => {
     setConflicts((current) => ({ ...current, [productId]: null }));

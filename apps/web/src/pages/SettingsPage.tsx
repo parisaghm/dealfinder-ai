@@ -1,6 +1,5 @@
 import {
   CHECK_FREQUENCIES,
-  COUNTRIES,
   CURRENCIES,
   DELIVERY_TIME_PREFERENCES,
   STORE_REGIONS,
@@ -28,7 +27,7 @@ import { AlertTriangle, Mail, Save } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   useClearData,
-  useCountries,
+  useCountryOptions,
   useMeta,
   useSendTestAlert,
   useSettings,
@@ -70,7 +69,6 @@ const DELIVERY_TIME_LABEL: Record<DeliveryTimePreference, string> = {
 export function SettingsPage() {
   const settings = useSettings();
   const { data: meta } = useMeta();
-  const countries = useCountries();
   const storeList = useStores(null, null);
   const updateSettings = useUpdateSettings();
   const sendTestAlert = useSendTestAlert();
@@ -130,15 +128,7 @@ export function SettingsPage() {
    * resolves; unsupported countries are listed and disabled rather than hidden,
    * because "not available yet" and "we forgot" are otherwise indistinguishable.
    */
-  const countryOptions = useMemo(() => {
-    const fromApi = countries.data?.items;
-    if (fromApi && fromApi.length > 0) return fromApi;
-    return COUNTRIES.map((entry) => ({
-      code: entry.code as CountryCode,
-      name: entry.name,
-      isSupported: entry.isSupported,
-    }));
-  }, [countries.data]);
+  const countryOptions = useCountryOptions();
 
   /**
    * Countries we actually have stores in.

@@ -15,6 +15,8 @@ import type {
   UpdateUserSettingsInput,
   UpdateWatchlistItemInput,
 } from '@deal-finder/shared';
+import { COUNTRIES } from '@deal-finder/shared';
+import { useMemo } from 'react';
 import {
   useMutation,
   useQueries,
@@ -137,6 +139,49 @@ export function useCountries() {
     staleTime: 60 * 60_000,
     retry: retryPolicy,
   });
+}
+
+/** The only three fields a destination select needs. */
+export interface CountryChoice {
+  code: CountryCode;
+  name: string;
+  isSupported: boolean;
+}
+
+/**
+ * Module-level so the fallback is referentially stable across renders, and
+ * `readonly` so no caller can sort this shared array in place.
+ */
+const STATIC_COUNTRY_CHOICES: readonly CountryChoice[] = COUNTRIES.map((entry) => ({
+  code: entry.code,
+  name: entry.name,
+  isSupported: entry.isSupported,
+}));
+
+/**
+ * Every country the app knows, for a destination select.
+ *
+ * Falls back to the static shared table whenever the request has not resolved
+ * *or has failed*. `/api/countries` is a projection of that same table and
+ * touches no database, so an unreachable API costs the user nothing here —
+ * whereas degrading to a one-entry dropdown is a far worse lie than a list that
+ * is, by construction, never stale.
+ *
+ * One hook rather than three copies: this bug existed precisely because the
+ * third call site never got the fallback.
+ */
+export function useCountryOptions(): readonly CountryChoice[] {
+  const fromApi = useCountries().data?.items;
+  return useMemo(() => {
+    if (fromApi && fromApi.length > 0) {
+      return fromApi.map((entry) => ({
+        code: entry.code,
+        name: entry.name,
+        isSupported: entry.isSupported,
+      }));
+    }
+    return STATIC_COUNTRY_CHOICES;
+  }, [fromApi]);
 }
 
 /**
